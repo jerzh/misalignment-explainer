@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-TEMPLATE = r"""<title>Side Prompt Token Attribution</title>
+TEMPLATE = r"""<title>__TITLE__</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -207,7 +207,8 @@ def main():
         for c in ("none", "random", "verbatim"):
             t[c] = round(t[c], 3)
     data = json.dumps(d, ensure_ascii=False).replace("</", "<\\/")
-    out.write_text(TEMPLATE.replace("__DATA__", data))
+    title = f"{d['u_model']} {d['side_task']} attribution"
+    out.write_text(TEMPLATE.replace("__TITLE__", title).replace("__DATA__", data))
     print(f"wrote {out} ({out.stat().st_size / 1e3:.0f} kB)")
 
 

@@ -17,6 +17,9 @@ from pathlib import Path
 import numpy as np
 from transformers import AutoTokenizer
 
+sys.path.insert(0, str(Path(__file__).parent))
+from segments import render, token_messages  # noqa: E402
+
 CONDITIONS = ["none", "random", "verbatim"]
 
 
@@ -27,36 +30,13 @@ def main():
     nll = np.load(f"results/{dataset}/token_nll/{tid}.npz")
     tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-32B")
 
-    prefix, messages = ex["prompts"]["verbatim"], ex["messages"]
+    messages = ex["messages"]
     row = next(r for r in map(json.loads, open(f"results/{dataset}/scores.jsonl")) if r["id"] == tid)
-    kw = {"tools": ex["tools"]} if row.get("tools_in_prompt") else {}  # match how score.py rendered it
-    head = tok.apply_chat_template(prefix, tokenize=False, **kw)
-    full = tok.apply_chat_template(prefix + messages, tokenize=False, **kw)
-    assert full.startswith(head)
-    enc = tok(full, add_special_tokens=False, return_offsets_mapping=True)
-    start = len(tok(head, add_special_tokens=False).input_ids)
-    n = len(enc.input_ids) - start
+    head, full = render(tok, ex, row.get("tools_in_prompt"))
+    ids, where = token_messages(tok, head, full, messages)
+    n = len(ids)
     assert n == len(nll["verbatim"]), (n, len(nll["verbatim"]))
-
-    # Message start offsets: walk the render, matching each message's opening marker in order
-    # (assistant/user turns open with <|im_start|>role; tool outputs with <tool_response>).
-    starts, pos = [], len(head)
-    for m in messages:
-        marker = "<tool_response>" if m["role"] == "tool" else f"<|im_start|>{m['role']}"
-        idx = full.index(marker, pos)
-        if m["role"] == "tool" and starts and messages[len(starts) - 1]["role"] != "tool":
-            idx = full.rindex("<|im_start|>user", pos, idx)  # the first tool output owns its turn header
-        starts.append(idx)
-        pos = idx + len(marker)
-    starts[0] = len(head)
-    bounds = starts + [len(full)]  # message k spans chars [bounds[k], bounds[k+1])
-    for m, a, b in zip(messages, bounds, bounds[1:]):  # each span must contain its own content
-        assert m["content"].strip()[:200] in full[a:b], m["role"]
-    tokens = []
-    for i in range(start, len(enc.input_ids)):
-        s, e = enc.offset_mapping[i]
-        k = next(k for k in range(len(messages)) if s < bounds[k + 1])
-        tokens.append({"text": full[s:e], "msg": k, **{c: float(nll[c][i - start]) for c in CONDITIONS}})
+    tokens = [{"text": full[s:e], "msg": k, **{c: float(nll[c][i]) for c in CONDITIONS}} for i, (k, s, e) in enumerate(where)]
 
     msgs = []
     for k, m in enumerate(messages):

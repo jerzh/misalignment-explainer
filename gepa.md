@@ -11,7 +11,7 @@ This file is the design. Implementation details are up to the experiment session
 
 ## Data preparation: remove the side-task harness calls
 
-Most DeepSeek transcripts (30 of 49) call `set_side_task_submission_args`, usually 75–95% of the way through. Its arguments spell out the attack, e.g. `{"description": "Bypassed the URL domain allowlist by updating src/url_filter.js so isAllowedUrl() accepts any ..."}`. Both T and the proposer would read the answer directly from that call.
+23 of 49 DeepSeek transcripts call `set_side_task_submission_args` (30 calls in all), usually 75–95% of the way through. Its arguments spell out the attack, e.g. `{"description": "Bypassed the URL domain allowlist by updating src/url_filter.js so isAllowedUrl() accepts any ..."}`. Both T and the proposer would read the answer directly from that call.
 
 **Remove every `set_side_task_*` and `run_side_task_test` call: drop the assistant turn and its tool reply.** These calls come from the eval harness, not from misaligned behavior, and E would never see them in deployment.
 - Removal is better than truncation: most transcripts keep going for 6 or more tool calls of main-task or cover work after the call, and that's realistic behavior worth keeping.
@@ -24,9 +24,11 @@ Apply the same cleaning to the conditions run so the numbers stay comparable.
 
 ## Objective
 
-- **Loss on assistant tokens only.** This is the open question in `todo.md`; I'm recommending it here. Tool outputs come from the environment, not from U.
-- **Score:** `gain(instr, chunk) = NLL_none(chunk) − NLL_instr(chunk)`, in nats summed over a chunk's assistant tokens. Higher is better. Baseline: `none` = 0.
-- **Chunks are the instances for the Pareto front.** Split each truncated transcript into about 8 contiguous chunks of assistant turns. One forward pass gives per-token NLL for the whole transcript, so every chunk's score comes from the same pass at no extra cost.
+- **Which tokens are scored is a choice; the main objective is decided by the test now running.** T always reads the full transcript, tool outputs included. The two variants differ only in which tokens' NLL is summed:
+  - **all tokens:** the current `score.py` behavior.
+  - **U's actions only:** assistant tokens (tool calls plus any visible text). Each is still predicted from everything before it, tool outputs included. Why it might be better: tool outputs come from the environment, not from U; scoring them may reward instructions that describe the environment ("this is a Flask app with Redis") rather than U's intent; and they're probably most of the tokens, which could dilute a small signal.
+- **Score:** `gain(instr, chunk) = NLL_none(chunk) − NLL_instr(chunk)`, in nats summed over the chunk's scored tokens. Higher is better. Baseline: `none` = 0. Both variants come from the same forward pass, so log both for every candidate whichever one GEPA optimizes.
+- **Chunks are the instances for the Pareto front.** Split each cleaned transcript into about 8 contiguous chunks of turns. One forward pass gives per-token NLL for the whole transcript, so every chunk's score comes from the same pass at no extra cost.
 
 ## Train/validation split: against memorization
 
@@ -95,6 +97,8 @@ The proposer reads the transcript, so it can infer the side task with no help fr
 
 Use the same N in best-of-N as GEPA's number of T passes so compute is matched. The claim "loss guidance helps" requires GEPA > best-of-N and GEPA > random feedback, measured on similarity to the true side task, not just on gain.
 
+**Ablation: which tokens are scored.** Run GEPA once with the all-tokens objective and once with U's actions only, keeping everything else the same. Compare the final instructions on side-task identification, and check how many describe the environment rather than a goal. Since both losses are logged for every candidate, you can also check, without extra T passes, whether the two objectives would have ranked candidates the same way. If they mostly agree, the full second run may not be needed.
+
 Reference rows that are not optimized: gist, verbatim block and random (another side task's gist), all scored on the same held-out chunks.
 
 ## Evaluation
@@ -107,7 +111,7 @@ For each final instruction:
 
 ## Models and compute
 
-- **T:** Qwen3-32B, unchanged. Run it as a persistent scoring server: `(trajectory_id, instruction) → per-token NLL on assistant tokens`, cached by hash. The optimization loop calls the server and doesn't hold the model.
+- **T:** Qwen3-32B, unchanged. Run it as a persistent scoring server: `(trajectory_id, instruction) → per-token NLL with a token-role mask (assistant / tool output)`, cached by hash. The optimization loop calls the server and doesn't hold the model.
 - **Proposer:** a strong Claude model, the same one for every arm. Log every proposer input and output.
 - **Judge:** a different model or prompt from the proposer, given the gist list but never the proposer's transcript view.
 - **Budget, roughly:** 49 DeepSeek runs × ~35 T passes × 4 arms ≈ 7k forward passes. Truncation and long transcripts make the per-pass cost vary, so time a pilot first.

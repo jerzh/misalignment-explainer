@@ -1,4 +1,4 @@
-# Score transcripts with Qwen3-32B on 2 H100s (h100-prime-001).
+# Score transcripts with Qwen3-32B on 2 H100s (h100-prime-001), interactive priority.
 #   sed 's|__DATASET__|glm53|g; s|__ARGS__||' k8s/score.yaml | fl run -f -
 #   sed 's|__DATASET__|deepseek_v4_pro|g; s|__ARGS__|--yarn|' k8s/score.yaml | fl run -f -
 # Expects the repo at ~/misalignment-explainer on vast-jerzh with .venv built (see k8s/sync-pod.yaml).
@@ -17,7 +17,7 @@ spec:
       - type: DisruptionTarget
   template:
     spec:
-      priorityClassName: normal-batch
+      priorityClassName: interactive  # user-approved for jobs with <= 2 GPUs
       restartPolicy: Never
       imagePullSecrets:
       - name: docker
