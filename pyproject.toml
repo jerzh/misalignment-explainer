@@ -1,0 +1,19 @@
+[project]
+name = "misalignment-explainer"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate",
+    "numpy",
+    "torch",
+    "transformers",
+]
+
+# The h200-vp-001 nodes run driver 580 (CUDA 13.0), so use torch's cu130 build.
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

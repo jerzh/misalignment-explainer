@@ -1,0 +1,35 @@
+# CPU-only pod for copying the repo onto the cluster's NFS volume and building the venv.
+#   kubectl apply -f k8s/sync-pod.yaml
+#   tar czf - --exclude=data/raw --exclude=.git --exclude=results --exclude=.venv . \
+#     | kubectl exec -i jerzh-sync -- tar xzf - -C /nfs/users/jerzh/misalignment-explainer
+#   kubectl exec jerzh-sync -- bash -lc 'cd ~/misalignment-explainer && UV_PYTHON_INSTALL_DIR=$HOME/.local/share/uv/python UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT= uv sync --python 3.12 --managed-python'
+#   kubectl delete pod jerzh-sync   # when done
+apiVersion: v1
+kind: Pod
+metadata:
+  name: jerzh-sync
+spec:
+  priorityClassName: interactive
+  restartPolicy: Never
+  imagePullSecrets:
+  - name: docker
+  volumes:
+  - name: home
+    persistentVolumeClaim:
+      claimName: vast-jerzh
+  containers:
+  - name: sync
+    image: ghcr.io/alignmentresearch/flamingo-devbox:latest
+    command: ["bash", "-c", "mkdir -p /nfs/users/jerzh/misalignment-explainer && sleep 86400"]
+    env:
+    - name: HOME
+      value: /nfs/users/jerzh
+    resources:
+      requests:
+        cpu: 4
+        memory: 16G
+      limits:
+        memory: 16G
+    volumeMounts:
+    - name: home
+      mountPath: /nfs/users/jerzh

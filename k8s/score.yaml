@@ -1,0 +1,67 @@
+# Score transcripts with Qwen3-32B on 2 H100s (h100-prime-001).
+#   sed 's|__DATASET__|glm53|g; s|__ARGS__||' k8s/score.yaml | fl run -f -
+#   sed 's|__DATASET__|deepseek_v4_pro|g; s|__ARGS__|--yarn|' k8s/score.yaml | fl run -f -
+# Expects the repo at ~/misalignment-explainer on vast-jerzh with .venv built (see k8s/sync-pod.yaml).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: jerzh-score-
+  labels:
+    kueue.x-k8s.io/queue-name: farai
+spec:
+  backoffLimit: 0
+  podFailurePolicy:
+    rules:
+    - action: Ignore  # re-create the pod if it is preempted; scoring resumes where it stopped
+      onPodConditions:
+      - type: DisruptionTarget
+  template:
+    spec:
+      priorityClassName: normal-batch
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: docker
+      volumes:
+      - name: home
+        persistentVolumeClaim:
+          claimName: vast-jerzh
+      - name: hf-cache
+        persistentVolumeClaim:
+          claimName: nfs-huggingface-home
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+      - name: score
+        image: ghcr.io/alignmentresearch/flamingo-devbox:latest
+        workingDir: /nfs/users/jerzh/misalignment-explainer
+        command: ["/bin/bash", "-c"]
+        args:
+        - .venv/bin/python scripts/score.py --examples data/__DATASET__.jsonl --out results/__DATASET__ __ARGS__
+        env:
+        - name: HOME
+          value: /nfs/users/jerzh
+        - name: HF_HOME
+          value: /cache/huggingface
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: huggingface
+              key: token
+              optional: true
+        resources:
+          requests:
+            cpu: 16
+            memory: 200G
+          limits:
+            memory: 200G
+            nvidia.com/gpu: 2
+        volumeMounts:
+        - name: home
+          mountPath: /nfs/users/jerzh
+        - name: hf-cache
+          mountPath: /cache/huggingface
+        - name: dshm
+          mountPath: /dev/shm
