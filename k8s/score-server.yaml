@@ -18,7 +18,7 @@ spec:
       - type: DisruptionTarget
   template:
     spec:
-      priorityClassName: interactive  # user-approved: <= 2 GPUs per job, <= 4 GPUs at interactive in total
+      priorityClassName: interactive  # user-approved: <= 4 GPUs per job, <= 4 GPUs at interactive across all our jobs
       restartPolicy: Never
       imagePullSecrets:
       - name: docker

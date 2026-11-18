@@ -121,11 +121,11 @@ Use the same N in best-of-N as GEPA's number of T passes so compute is matched.
 
 ## Models and compute
 
-- **T:** Qwen3-32B, unchanged (see TODO 5 in `todo.md` for changing it). **Serve it with vLLM (decided 2026-11-18)**: tensor parallelism over the 2 H100s (both GPUs work at once; the HF `device_map` split runs them in turn) and prompt log-probs, expected 2–3× faster than the pilot's ~10–17 s per pass. Scores differ slightly from the HF runs, so re-score every reference row (none, gist, verbatim block, …) on the vLLM server and compare only within it. Check vLLM's per-token log-probs against HF on a few transcripts first. Run it as a persistent scoring server: `(trajectory_id, instruction) → per-token NLL with a token-role mask (assistant / tool output)`, cached by hash. The optimization loop calls the server and doesn't hold the model.
+- **T:** Qwen3-32B, unchanged (see TODO 5 in `todo.md` for changing it). **Serve it with vLLM (decided 2026-11-18)**: tensor parallelism over 4 H100s (all GPUs work at once; the HF `device_map` split runs them in turn; 2-GPU vLLM measured ~4 s per 30–37k-token pass vs 10–17 s with HF) and prompt log-probs, expected 2–3× faster than the pilot's ~10–17 s per pass. Scores differ slightly from the HF runs, so re-score every reference row (none, gist, verbatim block, …) on the vLLM server and compare only within it. Check vLLM's per-token log-probs against HF on a few transcripts first. Run it as a persistent scoring server: `(trajectory_id, instruction) → per-token NLL with a token-role mask (assistant / tool output)`, cached by hash. The optimization loop calls the server and doesn't hold the model.
 - **Proposer:** a strong Claude model, the same one in every arm and both parts. Log every proposer input and output.
 - **Judge:** a different model or prompt from the proposer, given the gist list but never the proposer's transcript view.
 - **Monitor:** the TODO 2 black-box monitor (API calls; cheap compared with T passes).
-- **Budget, roughly:** Part 1, 49 trajectories × ~35 T passes ≈ 1.7k forward passes (×4 if all baseline arms run). Part 2 adds about the same again. DeepSeek transcripts are long (~61k tokens median, YaRN), so time a pilot first. The cluster allows ≤ 2 GPUs per job and ≤ 4 GPUs at `interactive` priority across all our jobs.
+- **Budget, roughly:** Part 1, 49 trajectories × ~35 T passes ≈ 1.7k forward passes (×4 if all baseline arms run). Part 2 adds about the same again. DeepSeek transcripts are long (~61k tokens median, YaRN), so time a pilot first. The cluster allows ≤ 4 GPUs per job and ≤ 4 GPUs at `interactive` priority across all our jobs, so one 4-GPU scoring server at a time.
 
 ## Pilot (do first)
 

@@ -1,4 +1,5 @@
-# GEPA scoring server, vLLM (tensor parallel over 2 H100s, h100-prime-001), interactive priority. Delete it when done:
+# GEPA scoring server, vLLM (tensor parallel over 4 H100s, h100-prime-001), interactive priority
+# (Flamingo raises a 4-GPU interactive pod to interactive-4gpu automatically). Delete it when done:
 #   kubectl delete vcjob jerzh-vllm-server
 # Runs from ~/misalignment-explainer-next on vast-jerzh. Reach it from your machine with:
 #   fl run -f k8s/score-server-vllm.yaml   (needs ~/vllm-venv on vast-jerzh: uv venv + uv pip install vllm)
@@ -18,7 +19,7 @@ spec:
       - type: DisruptionTarget
   template:
     spec:
-      priorityClassName: interactive  # user-approved: <= 2 GPUs per job, <= 4 GPUs at interactive in total
+      priorityClassName: interactive  # user-approved: <= 4 GPUs per job, <= 4 GPUs at interactive across all our jobs
       restartPolicy: Never
       imagePullSecrets:
       - name: docker
@@ -38,7 +39,7 @@ spec:
         workingDir: /nfs/users/jerzh/misalignment-explainer-next
         command: ["/bin/bash", "-c"]
         args:
-        - /nfs/users/jerzh/vllm-venv/bin/python scripts/score_server_vllm.py --examples data/deepseek_v4_pro_clean.jsonl --yarn --port 8000 --cache results/gepa_cache_vllm.jsonl
+        - /nfs/users/jerzh/vllm-venv/bin/python scripts/score_server_vllm.py --examples data/deepseek_v4_pro_clean.jsonl --yarn --tp 4 --port 8000 --cache results/gepa_cache_vllm.jsonl
         env:
         - name: HOME
           value: /nfs/users/jerzh
@@ -54,11 +55,11 @@ spec:
               optional: true
         resources:
           requests:
-            cpu: 16
-            memory: 200G
+            cpu: 32
+            memory: 320G
           limits:
-            memory: 200G
-            nvidia.com/gpu: 2
+            memory: 320G
+            nvidia.com/gpu: 4
         ports:
         - containerPort: 8000
         volumeMounts:
