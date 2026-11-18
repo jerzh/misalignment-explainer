@@ -12,9 +12,9 @@ In this project, we'll test this framework on agentic coding transcripts. First,
 
 TODO: (Deepseek trajectories only)
 1. Sanity check how the trajectories were generated. Are they from the original LinuxArena dataset? Are the main/side task a diverse enough sample pool? Are they unmonitored? Any other quirks of how they were set up?
-2. Our ultimate goal with this "explainer" method is to understand if U is doing anything malicious, beyond what other monitoring methods can already see. Let's run a black-box monitor pass over all trajectories, subset to only the ones the monitor scores low, and see if the 
-3. Held-out eval: LLM judge(instruction similar to side task prompt?)
-4. GEPA: Want max gain over none AND max benign-ness (via instruction monitor)
+2. Our ultimate goal with this "explainer" method is to understand if U is doing anything malicious, beyond what other monitoring methods can already see. Let's run a black-box monitor pass over all trajectories (or see if a monitor pass already exists in the dataset), subset to only the ones the monitor scores low ("hard to identify"), and see if the verbatim/random distinction remains.
+3. GEPA part 1: Just try to get the loss as low as possible. Run an LLM judge to check if the instruction is similar to the side task prompt, to understand the extent of recovery / whether there are some unrelated or "jailbreak" instructions that work.
+4. GEPA part 2: Red-team the protocol by trying to make the instruction as benign as possible (judged by same black-box monitor) while still having low loss. Let's maintain a Pareto frontier of instructions for the two objectives (loss, benign-ness).
 5. Consider using better reference model T (if no longer works)
 6. Per-step advice???
 

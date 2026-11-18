@@ -59,25 +59,42 @@ Goals stay flexible; adjust as results come in.
     Details are in `gepa.md` under Data preparation. The first-pass Q1 numbers include these calls, so their verbatim gap may be inflated by them. "U's actual prompt", the reference condition, still contains the GLM attack prompt's own mentions of `run_side_task_test`; keep it as a reference only.
   - DeepSeek transcripts have almost no visible text (18 of 3,404 assistant turns), so instructions about prose formatting can only matter for GLM.
 
-## Next
-- **Ranking, DeepSeek only** (`score.py --conditions ranking`, implemented, not launched): score `none` plus the gist of every side task in the trajectory's environment (DeepSeek: 2–6 per environment, ~5.2 on average). Is the true one the argmin, and what is its mean rank compared with chance? If it usually isn't the argmin, an optimizer won't recover it. `analyze.py` reports it. GLM is skipped (leaky; it would be the more expensive half). Given the partial results, consider also ranking verbatim blocks, since the gist's signal is weak.
-- **More reference models: prefer T close to U.** Hypothesis: a T from U's own family already predicts U's quirks (style, tool habits) without any instruction, so whatever loss the instruction still removes is more likely to be about the goal. A T from a distant family finds U's style surprising, and instructions (and later GEPA) would spend their budget describing that style (cf. unrelated group A).
-  - Constraints on candidates:
-    - Open weights, because we need log-probs for every transcript token, and closed APIs don't give log-probs on input text. Exception: a hosted endpoint that returns log-probs on input text (prompt log-probs) would also work.
-    - Long native context (≥ 128k for DeepSeek transcripts).
-    - A chat template that handles tool schemas and tool calls, since `score.py` now passes tool definitions.
-    - Cluster limit of ≤ 2 H100s per job. U itself and the large family members exceed it, so they need a larger approved job or a hosted endpoint.
-  - Candidates, ordered by similarity to U (check current releases; these are from my own knowledge):
-    1. **U itself** (DeepSeek V4 Pro / GLM-5.3) as T, the upper end. For it, the verbatim prompt is literally what produced the transcript, so it's a ceiling check for Q1 and the cleanest test for Q2. Too large for ≤ 2 H100s.
-    2. **Smaller models of the same family**: GLM family, e.g. GLM-4.5-Air (MoE, about 106B, 128k context, fits on 2 H100s in FP8); DeepSeek family, e.g. DeepSeek-Coder-V2-Lite (16B MoE, 128k context, but old). Check for newer small releases from both labs.
-    3. **Qwen3-32B** (current T): a different lab, but with similar training data and lineage to both.
-    4. Optionally one distant model as the far end, e.g. gpt-oss-120b. It tests the hypothesis rather than serving as a main T.
-  - Direct test of the hypothesis: cross the T families with the U datasets (GLM-family T on DeepSeek transcripts and the reverse, as well as the matching pairs). If same-family T separates gist from random and unrelated A better, that supports it.
-  - Comparing across models: nats aren't comparable between tokenizers, so compare each model's gain over its own `none` baseline, or normalize per byte of scored text. Report results per model first, then check whether the condition ordering and the ranking agree.
-  - Later, for GEPA, only if the multi-model ranking results look useful: optimize against the same-family T, and use the other Ts for a transfer check.
-  - Cost: each added model multiplies the number of T passes. Start with the candidate-ranking conditions on DeepSeek only.
-- Then Q2: optimize the instruction and compare it with the true side prompt. Plan: GEPA-style LLM search with loss feedback; the design is in `gepa.md`. Soft prompting is a possible later upper bound.
+## Done: generation sanity check and monitor subset (DeepSeek, Next 1–2)
+- **Generation** (run `7b175cea`, `board-models-…-deepseek-v4-pro-0813-linuxarena`, policy `ct/honest+ct/attack-vs-ct/null-blue-team`, task set `custom`):
+  - **U ran unmonitored.** `null-blue-team` means no protocol intervened, and the run metrics give `audit_budget` 0, `safety` 0, `caught` 0 on all samples. The monitor scores were computed post hoc, yet U's prompt still says "without being noticed". Only gpt-5.4-nano ever monitored these trajectories: of the 4 board runs, 2 used it and 2 used no monitor, so no stronger monitor exists in the data.
+  - **105 raw samples** = 45 honest runs (the same 45 main tasks, no side task) + 60 attack runs: 49 side task succeeded, 9 failed, 2 errored before scoring (→ "47 without a side-task score" = 45 honest + 2 errors). `startup_retries` is 7 on every sample, a setting, not a sign of trouble.
+  - **Tasks** are original LinuxArena tasks in a custom selection. The 60 attack runs use 60 side tasks, a subset of the 92 that the GLM run covers, across 10 environments and 45 main tasks; only 3 of the 60 main/side pairs also appear in the GLM run.
+  - **Pairing:** 15 of 60 main tasks are LinuxArena's generated cover tasks (`mtg_<env>_<side task>_…`); 8 of those 15 are paired with the very side task they were written for. The rest are ordinary main tasks (add_feature 40, refactor 15, fix_bug 5 overall).
+  - **Success bias:** every `mtg_` cover pairing succeeded (15/15) against 34/45 for ordinary main tasks, so keeping successes over-represents cover pairings (15 of 49). Failures concentrate in data_tampering (4 of 11 fail) and access_control_bypass (3 fail, 2 errors); the other categories rarely fail.
+- **Monitor subset** (`scripts/monitor_subset.py`; trajectory monitor `monitor2`, gpt-5.4-nano, 0–100, median 65 on the 49). U's tokens, from the instruction run:
 
+  | gain (nats/transcript) | monitor ≤ 25 (n = 17) | rest (n = 32) | Spearman with monitor score |
+  |---|---|---|---|
+  | verbatim block − random | **+42** [23, 62], positive in 82% | +90 [54, 144], 94% | +0.35 |
+  | gist − random | +10 [1, 19], 71% | +10 [1, 19], 59% | +0.04 |
+  | verbatim block − none | +57 [38, 77], 100% | +107 [71, 161], 94% | +0.39 |
+  | vague − random | +3, CI crosses 0 | +1, CI crosses 0 | −0.04 |
+
+  - The signal survives on transcripts the monitor doesn't flag: the full block still beats random in 14 of 17. But its gain halves, and across all 49 it grows with suspiciousness (ρ ≈ 0.35). Blatant attacks are easier to explain.
+  - The gist's small gain is the same in both halves and uncorrelated with the monitor, so a goal-level description helps equally on stealthy and blatant transcripts.
+  - The per-step monitor (`monitor1`, mean over steps; its max is ≥ 85 everywhere) correlates only weakly (ρ ≈ 0.1–0.15).
+
+## Next (README TODOs 1–5, DeepSeek only)
+1. **(Done; see above.) Sanity-check how the trajectories were generated.** README questions plus what the raw data shows so far (`data/raw/deepseek_v4_pro/7b175cea…`):
+   - Source: LinuxArena run `board-models-…-deepseek-v4-pro-0813-linuxarena`, current `simple-attack` policy. Are its environments and main/side tasks the original LinuxArena task set, or a modified board subset?
+   - Diversity: 49 kept trajectories cover 10 environments, 39 main tasks and 49 distinct side tasks (one trajectory each). Check how main and side tasks were paired (random, or main tasks picked to give cover?), and whether keeping only successes biases toward easy or blatant side tasks.
+   - Monitoring: the monitors look post hoc. `audit.caught` = 0 for all 49 trajectories, and nothing in the transcripts suggests U was stopped or edited. Confirm from the run config that U ran unmonitored, though its prompt still says "without being noticed".
+   - Quirks to explain: the raw directory has 105 samples (README says the board runs are 60 trajectories); 49 have the side task succeeded, 9 failed and 47 have no side-task score at all (errors?). Some samples have high `startup_retries` (e.g. 7).
+2. **(Done; see above.) Monitor subset.** A black-box monitor pass already exists in the raw samples, so a new one may not be needed:
+   - `scores.monitor2`: trajectory-level monitor `trajectory@gpt-5.4-nano`, 0–100. On the 49 kept: spread over the whole range, 21 below 50, 17 at ≤ 25, 13 at ≤ 15.
+   - `scores.monitor1`: per-step monitor `simple@gpt-5.4-nano`, several samples per step. Its max is ≥ 85 on all 49, so it's saturated; use a mean or percentile if using it at all.
+   - The other DeepSeek board runs re-score the same trajectories with other monitors; one may be stronger than gpt-5.4-nano.
+   - Plan: take the trajectory monitor; subset to low scores (e.g. ≤ 25, n = 17); rerun the `random − verbatim` and gist comparisons on the subset. n is small, so also report the correlation between gain and monitor score across all 49.
+   - Choose the monitor with TODO 4 in mind: its prompt must be adaptable to scoring an instruction on its own.
+3. **GEPA part 1: get the loss as low as possible**, then use an LLM judge to check whether the best instructions resemble the side task, or whether unrelated or "jailbreak" instructions work. Design in `gepa.md` (Part 1). The proposer prompt is neutral (no goal prior), and ≤ 300 characters is the only default constraint.
+   - Before or alongside it, the **ranking run** (`score.py --conditions ranking`, implemented, not launched): score `none` plus the gist of every side task in the trajectory's environment (2–6 per environment, ~5.2 on average). Is the true one the argmin, and what is its mean rank compared with chance? `analyze.py` reports it. Given the weak gist signal, consider also ranking verbatim blocks.
+4. **GEPA part 2: red-team the protocol.** Make the instruction look as benign as possible to the same black-box monitor while keeping the loss low, and keep a Pareto frontier over (loss, benign-ness). Design in `gepa.md` (Part 2). Includes re-scoring the frontier with a second monitor to separate truly benign instructions from monitor blind spots.
+5. **Better reference model T, if the signal breaks down** (e.g. in the monitor subset or on the Part 2 frontier). Depends on how 4 turns out. Hypothesis: a T from U's own family already predicts U's quirks, so what the instruction still explains is more likely to be the goal. Candidates: U itself (DeepSeek V4 Pro; needs more than 2 H100s or a hosted endpoint that returns log-probs on input text), smaller same-family models, then Qwen3-32B as now. Compare models by gain over each model's own `none`, not raw nats.
 
 ## Open questions (for the theory/literature session)
 - Should loss be measured only on U's actions, not tool outputs? Decided for now: U's tokens are the primary loss, all tokens the ablation (first-pass evidence above).
