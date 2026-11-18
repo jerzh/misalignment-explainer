@@ -182,3 +182,5 @@ How low can the loss go with an instruction that carries *no* information about 
 - Does the proposer respect the length limit?
 
 Then decide on the full Part 1 run, and pilot Part 2 on the same 5 trajectories.
+
+**Pilot caveat:** in the pilot's GEPA iterations the proposer was not given the trajectory (coding task + parent + chunk feedback only); only the zero-shot arm saw U's full action list. The full Part 1 run should give the proposer the full action list (decided 2026-11-18); `gepa.py` still needs that change. Results and details: `todo.md`, "Done: GEPA pilot".
