@@ -1,6 +1,7 @@
 """Box plot of per-trajectory gain over `none` for every instruction condition.
 
     python scripts/plot_conditions.py results/deepseek_v4_pro_instructions [out.png] [--note "caveat shown under the title"]
+        [--monitor-max 25 --raw data/raw/deepseek_v4_pro/<run>]   # only transcripts the trajectory monitor scored <= 25
 
 Two panels sharing the condition axis: the primary loss (U's tokens, scores_assistant.jsonl)
 and the ablation (all transcript tokens, scores.jsonl). Gain = loss(none) − loss(condition),
@@ -38,23 +39,42 @@ LABELS = {
 SURFACE, INK, INK_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 
 
-def gains(path):
+def monitor_scores(raw_dir, ids):
+    """Trajectory-level monitor score (monitor2, gpt-5.4-nano, 0-100) for each trajectory."""
+    out = {}
+    for tid in ids:
+        scores = json.loads((Path(raw_dir) / f"{tid}.json").read_text())["sample"]["scores"]
+        out[tid] = next(iter(scores["monitor2"]["value"].values()))
+    return out
+
+
+def gains(path, keep=None):
     rows = defaultdict(dict)
     for line in open(path):
         r = json.loads(line)
-        rows[r["id"]][r["condition"]] = r["nll_sum"]
+        if keep is None or r["id"] in keep:
+            rows[r["id"]][r["condition"]] = r["nll_sum"]
     return {c: np.array([v["none"] - v[c] for v in rows.values() if c in v and "none" in v]) for c in LABELS}, len(rows)
 
 
 def main():
     argv = sys.argv[1:]
-    note = None
-    if "--note" in argv:
-        i = argv.index("--note")
-        note = argv[i + 1]
-        argv = argv[:i] + argv[i + 2:]
+    opts = {}
+    for flag in ("--note", "--monitor-max", "--raw"):
+        if flag in argv:
+            i = argv.index(flag)
+            opts[flag] = argv[i + 1]
+            argv = argv[:i] + argv[i + 2:]
+    note = opts.get("--note")
     res = Path(argv[0])
-    out = Path(argv[1]) if len(argv) > 1 else res / "gain_over_none.png"
+    keep, subset = None, ""
+    if "--monitor-max" in opts:
+        ids = {json.loads(line)["id"] for line in open(res / "scores_assistant.jsonl")}
+        mon = monitor_scores(opts["--raw"], ids)
+        keep = {i for i, v in mon.items() if v <= float(opts["--monitor-max"])}
+        subset = f", trajectory monitor <= {float(opts['--monitor-max']):g}"
+    default = "gain_over_none.png" if keep is None else f"gain_over_none_monitor_le{float(opts['--monitor-max']):g}.png"
+    out = Path(argv[1]) if len(argv) > 1 else res / default
     panels = [("U's tokens (primary)", res / "scores_assistant.jsonl"), ("all tokens incl. tool outputs (ablation)", res / "scores.jsonl")]
     order = [c for _, (_, cs) in GROUPS.items() for c in cs][::-1]  # top-to-bottom as listed
     color = {c: col for _, (col, cs) in GROUPS.items() for c in cs}
@@ -62,7 +82,7 @@ def main():
     fig, axes = plt.subplots(1, 2, figsize=(12, 6.2), sharey=True, facecolor=SURFACE, gridspec_kw={"wspace": 0.08})
     rng = np.random.default_rng(0)
     for ax, (title, path) in zip(axes, panels):
-        g, n = gains(path)
+        g, n = gains(path, keep)
         ax.set_facecolor(SURFACE)
         for side in ("top", "right", "left"):
             ax.spines[side].set_visible(False)
@@ -98,7 +118,7 @@ def main():
     handles = [plt.Line2D([], [], marker="s", linestyle="", markersize=9, markerfacecolor=col + "40", markeredgecolor=col, label=name)
                for name, (col, _) in GROUPS.items()]
     fig.legend(handles=handles, loc="upper left", frameon=False, fontsize=9, labelcolor=INK, ncol=3, bbox_to_anchor=(0.015, 0.935))
-    fig.suptitle(f"{res.name}: gain over the empty instruction, per transcript (n = {n})", x=0.02, y=0.985, ha="left", fontsize=12, color=INK)
+    fig.suptitle(f"{res.name}: gain over the empty instruction, per transcript (n = {n}{subset})", x=0.02, y=0.985, ha="left", fontsize=12, color=INK)
     if note:
         wrapped = textwrap.fill(note, 150)
         fig.text(0.02, 0.02, wrapped, fontsize=8.5, color=INK_2, ha="left", va="bottom", style="italic", linespacing=1.4)
