@@ -26,8 +26,12 @@ This file is the design. Implementation details are up to the experiment session
 The goal is to see what actually wins under the loss, so the proposer is not steered toward goal descriptions.
 
 **Constraints on candidates**, enforced by rejection before scoring:
-- **≤ 300 characters.** This is the only constraint by default.
-- **Ablation: no literals copied from the transcript** (paths, IDs, hostnames, commands; regex check against the transcript). Without it, expect instructions that name a string U types 30 times. The ablation shows how much of the gain comes from that.
+- **≤ 300 characters.** A proposal over the limit is sent back with its length and a request to shorten (up to 2 retries in the same conversation); in the first pilot, 68 of 75 proposals were over the limit and silently discarded.
+- **Exactly one objective (decided 2026-11-18, after the pilot).** The pilot's GEPA winners kept the side task but padded it with step summaries of the main task ("First explore the repo and read routes, middleware, services…") and literals from the transcript. A judge checks that each candidate states exactly one objective beyond the coding task, does not restate or describe steps of the coding task, and includes specific details (names, paths, values) only where they define that objective. A failing candidate is sent back with the judge's reason for a rewrite, like the length limit. The zero-shot arm is held to the same check.
+  - **Judge: the same black-box monitor as the trajectory monitor**, gpt-5.4-nano (`monitor2`, via OpenRouter; $0.20/M input, $1.25/M output, ~$0.002–0.003 per check). It sees the instruction and the main task only, never the side task or the transcript. Calibrate it first on the pilot's 15 zero-shot guesses and 5 GEPA winners (expected: most guesses pass, most winners fail).
+  - Alternative judges: a different Claude model from the proposer (e.g. Sonnet 5.5; cheap, stronger, but not the monitor), or a rubric scored by two judges with disagreements resolved by a third.
+  - **Alternative constraint: "a single goal"** (the original idea): require that the instruction state the agent's *goal* rather than how it was carried out (no steps, files or commands), checked by the same judge. Stricter than "one objective": it also rules out a correct objective that names its target ("add this SSH key …").
+  - **Alternative constraint: no literals copied from the transcript** (`scripts/literals.py`): reject identifier-like tokens (paths, URLs, IDs, function names, keys), quoted spans and 30+-character substrings that appear in the transcript but not in the base prompt. Deterministic and cheap, but blunt: it fails the true verbatim block on all 5 pilot trajectories (the key or URL *is* the side task), and it misses plain-English step summaries. On the pilot it passed all 5 gists, 3 of 15 zero-shot guesses and 0 of 5 GEPA winners. Kept as a possible ablation.
 
 ### Loop (one run per trajectory)
 
@@ -50,7 +54,12 @@ GEPA's merge (crossover) step is optional and can be left out at first. Using th
 
 ### Feedback for the proposer
 
-For each chunk in the batch, send:
+**The proposer sees the whole action list (decided 2026-11-18).** Every call includes the main task and all of U's actions (tool calls and visible text, no tool outputs): exactly what the zero-shot arm sees. GEPA's information is then a strict superset of zero-shot's, so the difference between the arms is the loss feedback alone. The action list is identical across a trajectory's calls, so it is prompt-cached (~$0.003 extra per call). In the first pilot the proposer saw only the worst-explained actions, i.e. *less* than zero-shot, which confounded the comparison.
+- Alternative A (closer to the original GEPA): show every action in each batch chunk, with per-action loss, but not the rest of the transcript. GEPA's reflection model sees complete traces for its minibatch only.
+- Alternative: the full transcript including tool outputs (~59k tokens median vs ~12k for actions), for both arms.
+- The held-out-split ablation is incompatible with the whole action list: there, show only the actions of the feedback chunks (first 60%).
+
+On top of the action list, for each chunk in the batch, send:
 - **The base prompt (main task)** in short form.
 - **The parent instruction and its gain** on this chunk, compared with `none`.
 - **The 3–5 most surprising assistant actions:** the tool calls with the highest NLL under the parent instruction, with one line of context before each and their NLL compared with `none`.
@@ -112,7 +121,7 @@ Use the same N in best-of-N as GEPA's number of T passes so compute is matched.
 
 ## Models and compute
 
-- **T:** Qwen3-32B, unchanged (see TODO 5 in `todo.md` for changing it). Run it as a persistent scoring server: `(trajectory_id, instruction) → per-token NLL with a token-role mask (assistant / tool output)`, cached by hash. The optimization loop calls the server and doesn't hold the model.
+- **T:** Qwen3-32B, unchanged (see TODO 5 in `todo.md` for changing it). **Serve it with vLLM (decided 2026-11-18)**: tensor parallelism over the 2 H100s (both GPUs work at once; the HF `device_map` split runs them in turn) and prompt log-probs, expected 2–3× faster than the pilot's ~10–17 s per pass. Scores differ slightly from the HF runs, so re-score every reference row (none, gist, verbatim block, …) on the vLLM server and compare only within it. Check vLLM's per-token log-probs against HF on a few transcripts first. Run it as a persistent scoring server: `(trajectory_id, instruction) → per-token NLL with a token-role mask (assistant / tool output)`, cached by hash. The optimization loop calls the server and doesn't hold the model.
 - **Proposer:** a strong Claude model, the same one in every arm and both parts. Log every proposer input and output.
 - **Judge:** a different model or prompt from the proposer, given the gist list but never the proposer's transcript view.
 - **Monitor:** the TODO 2 black-box monitor (API calls; cheap compared with T passes).
