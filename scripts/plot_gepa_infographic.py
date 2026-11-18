@@ -16,7 +16,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from plot_conditions import GRID, INK, INK_2, SURFACE  # noqa: E402
+from plot_conditions import GRID, INK, INK_2, SURFACE, monitor_scores  # noqa: E402
+
+RAW = "data/raw/deepseek_v4_pro/7b175ceab7ff4202ae6bd95245d13590"  # the DeepSeek run's raw samples (black-box monitor scores)
 
 ARMS = [("verbatim", "True side task (verbatim block)", "#2a78d6"),
         ("zero_shot", "Zero-shot Opus (best of 3 guesses)", "#eb6834"),
@@ -53,6 +55,10 @@ def main():
             "gist": t["refs"]["gist"]["robust_gain"],
         })
 
+    mon = monitor_scores(RAW, [t["id"] for t in S["trajectories"]])
+    for r, t in zip(rows, S["trajectories"]):
+        r["monitor"] = mon[t["id"]]
+    rows.sort(key=lambda r: r["monitor"])  # least to most suspicious
     n = len(rows)
     row_h = 2.55
     fig = plt.figure(figsize=(17, 1.6 + n * row_h), facecolor=SURFACE)
@@ -75,6 +81,7 @@ def main():
         top = 1 - (1.6 + i * row_h) / H
         bottom = top - (row_h - 0.25) / H
         fig.text(0.015, top - 0.02 / H, f"{r['title']}  ·  {r['env']}  ·  {r['id']}", fontsize=10, color=INK, va="top", weight="bold")
+        fig.text(0.415 + 0.19, top - 0.02 / H, f"black-box monitor: {r['monitor']}/100", fontsize=10, color=INK_2, va="top", ha="right")
         for k, (key, _, color) in enumerate(ARMS):
             y0 = bottom
             h = (top - 0.28 / H) - bottom

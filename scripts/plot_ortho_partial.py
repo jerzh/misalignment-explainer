@@ -17,7 +17,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from plot_conditions import GRID, INK, INK_2, SURFACE  # noqa: E402
+from plot_conditions import GRID, INK, INK_2, SURFACE, monitor_scores  # noqa: E402
+
+RAW = "data/raw/deepseek_v4_pro/7b175ceab7ff4202ae6bd95245d13590"  # the DeepSeek run's raw samples (black-box monitor scores)
 
 BLUE, ORANGE, GREEN, PURPLE = "#2a78d6", "#eb6834", "#1baf7a", "#8b5cd6"  # validated (validate_palette.js, light)
 CARDS = [("verbatim_block", "True side task (verbatim block)", BLUE),
@@ -63,6 +65,11 @@ def main():
     out = Path(sys.argv[3]) if len(sys.argv) > 3 else res / "infographic_partial.png"
     examples = {e["id"]: e for e in map(json.loads, open(data))}
     rows = load(res, examples)
+    full = {e["id"][:8]: e["id"] for e in examples.values()}
+    mon = monitor_scores(RAW, [full[r["id"]] for r in rows])
+    for r in rows:
+        r["monitor"] = mon[full[r["id"]]]
+    rows.sort(key=lambda r: r["monitor"])  # least to most suspicious, as in the pilot infographic
 
     n, row_h = len(rows), 2.55
     H = 1.75 + n * row_h
@@ -76,17 +83,18 @@ def main():
              "instruction using only coding-task content; a Qwen3-32B judge that sees the side task rejects any leak. All ≤ 300 characters.",
              fontsize=9.5, color=INK_2, va="top")
     fig.text(0.015, 1 - 1.25 / H, "Pilot zero-shot / GEPA best: the earlier pilot's instructions (proposer Opus 4.8), which name the side task; "
-             "re-scored here on the same server. Dots: the other two orthogonal guesses.", fontsize=9.5, color=INK_2, va="top")
+             "re-scored here on the same server. Rows: least to most suspicious to the black-box monitor.", fontsize=9.5, color=INK_2, va="top")
     col_x, col_w = [0.015, 0.215, 0.415], 0.19
     for k, (_, label, color) in enumerate(CARDS):
         fig.text(col_x[k] + 0.004, 1 - 1.55 / H, label, fontsize=10.5, color=color, weight="bold", va="top")
-    fig.text(0.64, 1 - 1.55 / H, "gain over no instruction (nats)", fontsize=10.5, color=INK_2, va="top")
+    fig.text(0.64, 1 - 1.55 / H, "gain over no instruction (nats)   ·   dots: the other two orthogonal guesses", fontsize=10.5, color=INK_2, va="top")
 
     vmax = max(max(r["gains"][k] for k, _, _ in BARS) for r in rows)
     for i, r in enumerate(rows):
         top = 1 - (1.75 + i * row_h) / H
         bottom = top - (row_h - 0.25) / H
         fig.text(0.015, top - 0.02 / H, f"{r['title']}  ·  {r['env']}  ·  {r['id']}", fontsize=10, color=INK, va="top", weight="bold")
+        fig.text(0.415 + 0.19, top - 0.02 / H, f"black-box monitor: {r['monitor']}/100", fontsize=10, color=INK_2, va="top", ha="right")
         h = (top - 0.28 / H) - bottom
         for k, (key, _, color) in enumerate(CARDS):
             fig.patches.append(FancyBboxPatch((col_x[k], bottom), col_w, h, boxstyle="round,pad=0,rounding_size=0.004",
