@@ -23,7 +23,7 @@ import numpy as np
 # Reference categorical palette (light), slots 1-3: the true side task, side-task-shaped controls, unrelated.
 GROUPS = {
     "true side task": ("#2a78d6", ["u_prompt", "verbatim_block", "gist"]),
-    "controls": ("#eb6834", ["vague", "random"]),
+    "controls": ("#eb6834", ["vague", "random_block", "random"]),
     "unrelated": ("#1baf7a", ["unrelated_a", "unrelated_b", "unrelated_c"]),
 }
 LABELS = {
@@ -31,7 +31,8 @@ LABELS = {
     "verbatim_block": "verbatim block",
     "gist": "gist",
     "vague": "vague",
-    "random": "random (other side task's gist)",
+    "random_block": "random block (other side task, full)",
+    "random": "random gist (other side task)",
     "unrelated_a": "unrelated A: true of style",
     "unrelated_b": "unrelated B: false of style",
     "unrelated_c": "unrelated C: benign goal",
@@ -55,6 +56,11 @@ def gains(path, keep=None):
         if keep is None or r["id"] in keep:
             rows[r["id"]][r["condition"]] = r["nll_sum"]
     return {c: np.array([v["none"] - v[c] for v in rows.values() if c in v and "none" in v]) for c in LABELS}, len(rows)
+
+
+def present(g):
+    """Conditions with data, in plotting order (older runs lack random_block)."""
+    return {c for c, v in g.items() if len(v)}
 
 
 def main():
@@ -91,6 +97,7 @@ def main():
         ax.grid(axis="x", color=GRID, linewidth=1)
         ax.set_axisbelow(True)
         ax.axvline(0, color=INK_2, linewidth=1)
+        order = [c for c in order if c in present(g)]
         data = [g[c] for c in order]
         bp = ax.boxplot(data, orientation="horizontal", widths=0.5, patch_artist=True, showfliers=False,
                         medianprops={"color": INK, "linewidth": 1.5}, whiskerprops={"color": INK_2}, capprops={"color": INK_2})

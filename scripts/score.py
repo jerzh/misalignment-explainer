@@ -13,7 +13,9 @@ stays fixed (see build_dataset.py for how each dataset defines the prompts).
 
 --conditions instructions (no attack frame; use the --clean datasets): the honest prompt plus
 one instruction string in a fixed wrapper at the end of the system prompt, so conditions differ
-only in that string (`none` keeps the wrapper with an empty string). See INSTRUCTIONS below and
+only in that string (`none` keeps the wrapper with an empty string). `random` is another side task's
+gist and `random_block` its full block (same other trajectory), the length-matched controls for
+`gist` and `verbatim_block`. See INSTRUCTIONS below and
 todo.md. `u_prompt` is U's actual attack prompt, without the wrapper, as a reference.
 
 --conditions ranking: the same wrapper holding the gist of every side task in the trajectory's
@@ -63,7 +65,8 @@ def prefixes(ex, by_env, rng, mode):
     base = ex["prompts"]["none"]
     if mode == "instructions":
         texts = {"none": "", "gist": ex["gist"], "verbatim_block": ex["side_block"], "vague": INSTRUCTIONS["vague"],
-                 "random": other["gist"], **{k: v for k, v in INSTRUCTIONS.items() if k.startswith("unrelated")}}
+                 "random": other["gist"], "random_block": other["side_block"],
+                 **{k: v for k, v in INSTRUCTIONS.items() if k.startswith("unrelated")}}
         conds = {c: with_instruction(base, t) for c, t in texts.items()}
         conds["u_prompt"] = ex["prompts"]["verbatim"]
         return conds, other["id"]
