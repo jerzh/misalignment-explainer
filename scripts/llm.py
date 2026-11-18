@@ -3,7 +3,7 @@
 Calls go to OpenRouter (key from OPENROUTER_API_KEY; run `source ~/.bashrc` first so the newest key is
 used), except Opus when opus_direct=True: then Opus goes to the Anthropic API (ANTHROPIC_API_KEY), with
 server-side refusal fallbacks only if opus_fallbacks=True (off by default, so every reply comes from
-Opus 5.5 and a refusal is just a refusal), because OpenRouter's Opus providers ("Claude Platform on AWS")
+the requested model and a refusal is just a refusal), because OpenRouter's Opus providers ("Claude Platform on AWS")
 content-filters these attack transcripts. opus_provider pins OpenRouter's Opus calls to one provider. Each call asks
 OpenRouter to report its cost (`usage.include`); if a response lacks it, cost is computed from the
 token counts and PRICES. Before every call the client refuses to start if spent + margin > budget.
@@ -19,12 +19,15 @@ import urllib.request
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
 OPUS = "anthropic/claude-opus-5.5"
+OPUS48 = "anthropic/claude-opus-4.8"
+DIRECT_ID = {OPUS: "claude-opus-5-5", OPUS48: "claude-opus-4-8"}  # Anthropic API model ids
 QWEN = "qwen/qwen3-32b"
 PRICES = {  # $ per million tokens (OpenRouter, 2026-11-18): input, output, cache read, cache write
     OPUS: (4.0, 20.0, 0.20, 5.0),
+    OPUS48: (5.0, 25.0, 0.50, 6.25),
     QWEN: (0.08, 0.28, 0.08, 0.08),
 }
-MARGIN = {OPUS: 0.20, QWEN: 0.01}  # $ reserved per call when checking the budget
+MARGIN = {OPUS: 0.20, OPUS48: 0.25, QWEN: 0.01}  # $ reserved per call when checking the budget
 
 
 class BudgetExceeded(Exception):
@@ -53,23 +56,26 @@ class OpenRouter:
         fresh = max(0, usage.get("prompt_tokens", 0) - read - write)
         return (fresh * p_in + read * p_read + write * p_write + usage.get("completion_tokens", 0) * p_out) / 1e6
 
-    def chat(self, kind, model, system, content, tag, max_tokens=16000, effort=None, retries=3):
+    def chat(self, kind, model, system, content, tag, max_tokens=16000, effort=None, retries=3, history=None):
         """One request. `content` is a string or a list of content parts (cache_control allowed).
+        `history`: earlier turns of the same conversation ([{"role", "content"}, ...]) placed before it.
         Returns (text, finish_reason)."""
+        history = history or []
         with self.lock:
             if self.spent + MARGIN.get(model, 0.05) > self.budget:
                 raise BudgetExceeded(f"spent ${self.spent:.2f} of ${self.budget:.2f}")
         t0 = time.time()
         if self.dry_run:
             text, finish, usage, cost = self.dry_reply(kind, system, content), "stop", {}, 0.0
-        elif model == OPUS and self.opus_direct:
-            text, finish, usage, cost = self.anthropic_chat(system, content, max_tokens, effort)
+        elif model in DIRECT_ID and self.opus_direct:
+            assert not history, "history is only supported via OpenRouter"
+            text, finish, usage, cost = self.anthropic_chat(model, system, content, max_tokens, effort)
         else:
             body = {"model": model, "max_tokens": max_tokens, "usage": {"include": True},
-                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
+                    "messages": [{"role": "system", "content": system}, *history, {"role": "user", "content": content}]}
             if effort:
                 body["reasoning"] = {"effort": effort}
-            if model == OPUS and self.opus_provider:
+            if model in DIRECT_ID and self.opus_provider:
                 body["provider"] = {"order": [self.opus_provider], "allow_fallbacks": False}
             for attempt in range(retries):
                 try:
@@ -100,27 +106,30 @@ class OpenRouter:
         return text, finish
 
 
-ANTHROPIC_PRICE = (4.0, 5.0, 0.20, 20.0)  # Opus 5.5 direct: input, cache write, cache read, output ($/M)
+ANTHROPIC_PRICE = {  # direct API: input, cache write, cache read, output ($/M)
+    OPUS: (4.0, 5.0, 0.20, 20.0),
+    OPUS48: (5.0, 6.25, 0.50, 25.0),
+}
 
 
-def _anthropic_cost(usage):
-    p_in, p_write, p_read, p_out = ANTHROPIC_PRICE
+def _anthropic_cost(model, usage):
+    p_in, p_write, p_read, p_out = ANTHROPIC_PRICE[model]
     g = lambda k: getattr(usage, k, 0) or 0  # noqa: E731
     return (g("input_tokens") * p_in + g("cache_creation_input_tokens") * p_write
             + g("cache_read_input_tokens") * p_read + g("output_tokens") * p_out) / 1e6
 
 
-def _anthropic_chat(self, system, content, max_tokens, effort):
+def _anthropic_chat(self, model, system, content, max_tokens, effort):
     parts = [{"type": "text", "text": content}] if isinstance(content, str) else content
     kwargs = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.opus_fallbacks else {}
     resp = self.anthropic.beta.messages.create(  # no fallback by default: every instruction must come from Opus 5.5
-        model="claude-opus-5-5", max_tokens=max_tokens, system=system,
+        model=DIRECT_ID[model], max_tokens=max_tokens, system=system,
         messages=[{"role": "user", "content": parts}],
         output_config={"effort": effort or "medium"}, **kwargs,
     )
     text = "".join(b.text for b in resp.content if b.type == "text")
     fell_back = any(getattr(it, "type", "") == "fallback_message" for it in (getattr(resp.usage, "iterations", None) or []))
-    cost = _anthropic_cost(resp.usage) * (1.25 if fell_back else 1.0)  # fallback models can cost more; stay conservative
+    cost = _anthropic_cost(model, resp.usage) * (1.25 if fell_back else 1.0)  # fallback models can cost more; stay conservative
     usage = resp.usage.to_dict() if hasattr(resp.usage, "to_dict") else {}
     return text, resp.stop_reason, usage, cost
 
