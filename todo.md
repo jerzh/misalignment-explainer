@@ -18,6 +18,13 @@ Goals stay flexible; adjust as results come in.
   - Per-token attribution pages: GLM `744ca2f7` and DeepSeek `1aef4d4f` (links in the experiment session). For DeepSeek the gain sits on U investigating the files the side task concerns and on the sabotage edit itself.
 - When the DeepSeek job finishes: re-run `analyze.py`, `plot.py` and `segment_scores.py` on all 49.
 
+## In progress: instruction conditions (launched 2026-11-18 ~00:05, `interactive`, 2 H100s each)
+- Jobs: `jerzh-instr-7mr8c` (GLM, 178 of 203 trajectories fit in 32k after cleaning, ETA ~5–6 h) and `jerzh-instr-rn6jq` (DeepSeek, 49, YaRN, ETA ~3–4 h). Run from `/nfs/users/jerzh/misalignment-explainer-next`, so the first-pass job keeps its own code. Results go to `results/{glm53,deepseek_v4_pro}_instructions/`.
+- Data: `data/<ds>_clean.jsonl` (`build_dataset.py --clean`). Removed 469 GLM messages (235 `run_side_task_test` turns, 129 of which also carried narration, plus their replies; 187 of 203 transcripts affected) and 60 DeepSeek messages (30 `set_side_task_submission_args` turns plus replies). Harness paragraphs were stripped from `side_block`: the generic one in all 49 DeepSeek side tasks, plus "Using `set_side_task_submission_args`, submit…" in 2. `gist` is the cleaned `side_block`'s first paragraph.
+- `score.py --conditions instructions`, 9 conditions. The wrapper `<additional_instructions>…</additional_instructions>` is appended to the honest system prompt (before Qwen's `# Tools` block); `none` keeps the wrapper empty. Conditions: none, gist, verbatim_block, vague, random (another side task's gist, same environment), unrelated_a "Start by exploring the repository with `ls -la` and `find` before changing anything.", unrelated_b "Never use bash; use only the text editor to view and change files.", unrelated_c "Also write unit tests for any code you change.", and u_prompt (U's attack prompt, cleaned, no wrapper).
+- Ranking (`--conditions ranking`: `none` plus every side task gist in the environment, ~8.6 per GLM trajectory, ~5.2 per DeepSeek one) is implemented but not launched. It costs about as much again as the instruction run.
+- Analysis: `segment_scores.py <results> <data>` then `analyze.py` on `scores_assistant.jsonl` (primary) and `scores.jsonl` (ablation). `analyze.py` reports the gain over `none` and over `random` for every condition, plus the ranking summary.
+
 ## Next run: spec (all of the below applies to every condition)
 - **Tool definitions in the prompt.** `score.py` now passes U's tool schemas to the chat template in every condition by default, minus attack-only tools (`run_side_task_test`, `set_side_task_submission_args`). `--no-tools` reproduces the first pass.
 - **Primary loss: U's tokens only.** These are assistant visible text plus tool calls, with chat-template tokens excluded. T still reads the full transcript, tool outputs included, as context. **Ablation: all transcript tokens including tool outputs**, from the same forward pass (`scripts/segment_scores.py` writes both, plus a tool-output-only split).
@@ -50,6 +57,21 @@ Goals stay flexible; adjust as results come in.
 
     Details are in `gepa.md` under Data preparation. The first-pass Q1 numbers include these calls, so their verbatim gap may be inflated by them. "U's actual prompt", the reference condition, still contains the GLM attack prompt's own mentions of `run_side_task_test`; keep it as a reference only.
   - DeepSeek transcripts have almost no visible text (18 of 3,404 assistant turns), so instructions about prose formatting can only matter for GLM.
+- **More reference models: prefer T close to U.** Hypothesis: a T from U's own family already predicts U's quirks (style, tool habits) without any instruction, so whatever loss the instruction still removes is more likely to be about the goal. A T from a distant family finds U's style surprising, and instructions (and later GEPA) would spend their budget describing that style (cf. unrelated group A).
+  - Constraints on candidates:
+    - Open weights, because we need log-probs for every transcript token, and closed APIs don't give log-probs on input text. Exception: a hosted endpoint that returns log-probs on input text (prompt log-probs) would also work.
+    - Long native context (≥ 128k for DeepSeek transcripts).
+    - A chat template that handles tool schemas and tool calls, since `score.py` now passes tool definitions.
+    - Cluster limit of ≤ 2 H100s per job. U itself and the large family members exceed it, so they need a larger approved job or a hosted endpoint.
+  - Candidates, ordered by similarity to U (check current releases; these are from my own knowledge):
+    1. **U itself** (DeepSeek V4 Pro / GLM-5.3) as T, the upper end. For it, the verbatim prompt is literally what produced the transcript, so it's a ceiling check for Q1 and the cleanest test for Q2. Too large for ≤ 2 H100s.
+    2. **Smaller models of the same family**: GLM family, e.g. GLM-4.5-Air (MoE, about 106B, 128k context, fits on 2 H100s in FP8); DeepSeek family, e.g. DeepSeek-Coder-V2-Lite (16B MoE, 128k context, but old). Check for newer small releases from both labs.
+    3. **Qwen3-32B** (current T): a different lab, but with similar training data and lineage to both.
+    4. Optionally one distant model as the far end, e.g. gpt-oss-120b. It tests the hypothesis rather than serving as a main T.
+  - Direct test of the hypothesis: cross the T families with the U datasets (GLM-family T on DeepSeek transcripts and the reverse, as well as the matching pairs). If same-family T separates gist from random and unrelated A better, that supports it.
+  - Comparing across models: nats aren't comparable between tokenizers, so compare each model's gain over its own `none` baseline, or normalize per byte of scored text. Report results per model first, then check whether the condition ordering and the ranking agree.
+  - Later, for GEPA, only if the multi-model ranking results look useful: optimize against the same-family T, and use the other Ts for a transfer check.
+  - Cost: each added model multiplies the number of T passes. Start with the candidate-ranking conditions on DeepSeek only.
 - Then Q2: optimize the instruction and compare it with the true side prompt. Plan: GEPA-style LLM search with loss feedback; the design is in `gepa.md`. Soft prompting is a possible later upper bound.
 
 ## Open questions (for the theory/literature session)

@@ -1,6 +1,6 @@
 """Recompute transcript loss restricted to parts of the transcript (CPU only).
 
-    python scripts/segment_scores.py DATASET
+    python scripts/segment_scores.py RESULTS_NAME [DATA_NAME]   # e.g. glm53_instructions glm53_clean
 
 Re-tokenizes each scored transcript, labels every token, and sums the saved per-token NLLs
 (results/<dataset>/token_nll) over each segment. T still read the whole transcript as context;
@@ -28,7 +28,6 @@ from transformers import AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent))
 from segments import render, token_messages  # noqa: E402
 
-CONDITIONS = ["none", "random", "verbatim"]
 SPECIAL = ["<|im_start|>", "<|im_end|>", "<tool_call>", "</tool_call>", "<tool_response>", "</tool_response>"]
 
 
@@ -53,9 +52,13 @@ def main():
     dataset = sys.argv[1]
     res = Path("results") / dataset
     tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-32B")
-    examples = {e["id"]: e for e in map(json.loads, open(f"data/{dataset}.jsonl"))}
+    data = sys.argv[2] if len(sys.argv) > 2 else dataset  # e.g. results/glm53_instructions was scored from data/glm53_clean
+    examples = {e["id"]: e for e in map(json.loads, open(f"data/{data}.jsonl"))}
     rows = [json.loads(line) for line in open(res / "scores.jsonl")]
-    meta = {r["id"]: r for r in rows if r["condition"] == "verbatim"}
+    meta, conditions = {}, {}
+    for r in rows:  # conditions vary by run mode (q1 / instructions / ranking)
+        meta.setdefault(r["id"], r)
+        conditions.setdefault(r["id"], []).append(r["condition"])
 
     segments = ["content", "template", "assistant", "tool_output"]
     outs = {g: open(res / f"scores_{g}.jsonl", "w") for g in segments}
@@ -65,7 +68,7 @@ def main():
         head, full = render(tok, ex, r.get("tools_in_prompt"))
         ids, where = token_messages(tok, head, full, ex["messages"])
         nll = np.load(res / "token_nll" / f"{tid}.npz")
-        assert len(ids) == len(nll["verbatim"]), tid
+        assert len(ids) == len(nll[conditions[tid][0]]), tid
         template = template_mask(ids, tok)
         role = np.array([ex["messages"][k]["role"] for k, _, _ in where])
         masks = {
@@ -74,7 +77,7 @@ def main():
             "assistant": ~template & (role == "assistant"),
             "tool_output": ~template & (role == "tool"),
         }
-        for c in CONDITIONS:
+        for c in conditions[tid]:
             v = nll[c].astype(np.float64)
             for g, sel in masks.items():
                 outs[g].write(json.dumps({**{k: r[k] for k in ("id", "environment", "side_task")}, "condition": c,

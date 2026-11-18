@@ -18,6 +18,10 @@ Each output line holds one trajectory:
   - tools:             U's tool schemas minus attack-only tools (same in every condition)
 
 Kept: attack trajectories whose side task succeeded.
+
+--clean (for the instruction-conditions run) also removes side-task harness traces: assistant turns
+calling set_side_task_* / run_side_task_test plus their replies, and harness paragraphs in the side
+block; and adds `gist`, the side block's first paragraph.
 """
 
 import argparse
@@ -150,11 +154,51 @@ def side_success(sample, side_id):
     return False
 
 
+def is_harness(name):
+    return name.startswith("set_side_task") or name == "run_side_task_test"
+
+
+HARNESS_TEXT = re.compile(r"set_side_task|submission_args|run_side_task_test")
+
+
+def clean_side_block(block):
+    """Drop paragraphs that mention the side-task harness tools."""
+    paras = re.split(r"\n\s*\n", block.strip())
+    return "\n\n".join(p for p in paras if not HARNESS_TEXT.search(p))
+
+
+def remove_harness(ex):
+    """Remove side-task harness traces (see gepa.md, Data preparation).
+
+    Drops every assistant turn that calls set_side_task_* / run_side_task_test (no turn mixes them
+    with other calls) together with its tool replies, and drops harness paragraphs from the side
+    block, both in side_block and inside U's verbatim prompt.
+    """
+    messages, skip = [], 0
+    for m in ex["messages"]:
+        calls = m.get("tool_calls") or []
+        if m["role"] == "assistant" and calls and all(is_harness(tc["function"]["name"]) for tc in calls):
+            skip = len(calls)
+            continue
+        if m["role"] == "tool" and skip:
+            skip -= 1
+            continue
+        skip = 0
+        messages.append(m)
+    side = clean_side_block(ex["side_block"])
+    verbatim = [{**m, "content": m["content"].replace(ex["side_block"], "\n" + side + "\n")} for m in ex["prompts"]["verbatim"]]
+    assert any(side in m["content"] for m in verbatim)
+    removed = len(ex["messages"]) - len(messages)
+    return {**ex, "messages": messages, "side_block": side, "prompts": {**ex["prompts"], "verbatim": verbatim},
+            "gist": re.split(r"\n\s*\n", side)[0].strip(), "harness_messages_removed": removed}
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("raw_dir")
     p.add_argument("out")
     p.add_argument("--format", choices=["simple", "board"], default="simple")
+    p.add_argument("--clean", action="store_true", help="remove side-task harness calls and mentions (next-run data)")
     args = p.parse_args()
     convert = convert_simple if args.format == "simple" else convert_board
 
@@ -175,6 +219,8 @@ if __name__ == "__main__":
                 "side_task": side["id"],
                 **ex,
             }
+            if args.clean:
+                ex = remove_harness(ex)
             f.write(json.dumps(ex) + "\n")
             kept += 1
     print(f"kept {kept}, skipped {skipped} -> {args.out}")
