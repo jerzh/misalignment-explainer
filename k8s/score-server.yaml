@@ -1,0 +1,70 @@
+# GEPA scoring server: Qwen3-32B on 2 H100s (h100-prime-001), interactive priority. Delete it when done:
+#   kubectl delete vcjob jerzh-gepa-server
+# Runs from ~/misalignment-explainer-next on vast-jerzh. Reach it from your machine with:
+#   fl run -f k8s/score-server.yaml
+#   kubectl port-forward pod/jerzh-gepa-server-main-0 8000:8000
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jerzh-gepa-server
+  labels:
+    kueue.x-k8s.io/queue-name: farai
+spec:
+  backoffLimit: 0
+  podFailurePolicy:
+    rules:
+    - action: Ignore  # re-create the pod if it is preempted; scoring resumes where it stopped
+      onPodConditions:
+      - type: DisruptionTarget
+  template:
+    spec:
+      priorityClassName: interactive  # user-approved: <= 2 GPUs per job, <= 4 GPUs at interactive in total
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: docker
+      volumes:
+      - name: home
+        persistentVolumeClaim:
+          claimName: vast-jerzh
+      - name: hf-cache
+        persistentVolumeClaim:
+          claimName: nfs-huggingface-home
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+      - name: score
+        image: ghcr.io/alignmentresearch/flamingo-devbox:latest
+        workingDir: /nfs/users/jerzh/misalignment-explainer-next
+        command: ["/bin/bash", "-c"]
+        args:
+        - .venv/bin/python scripts/score_server.py --examples data/deepseek_v4_pro_clean.jsonl --yarn --port 8000 --cache results/gepa_cache.jsonl
+        env:
+        - name: HOME
+          value: /nfs/users/jerzh
+        - name: HF_HOME
+          value: /cache/huggingface
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: huggingface
+              key: token
+              optional: true
+        resources:
+          requests:
+            cpu: 16
+            memory: 200G
+          limits:
+            memory: 200G
+            nvidia.com/gpu: 2
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: home
+          mountPath: /nfs/users/jerzh
+        - name: hf-cache
+          mountPath: /cache/huggingface
+        - name: dshm
+          mountPath: /dev/shm
