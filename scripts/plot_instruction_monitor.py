@@ -73,7 +73,6 @@ def main():
         ex = examples[tid]
         ax.set_title(f"{ex['side_task']}\n{tid[:8]} · trajectory monitor {mon[tid]}/100", fontsize=9.5, color=INK, loc="left")
         ax.set_ylim(-6, 106)
-        ax.axhline(50, color=GRID, linewidth=1)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         for side in ("left", "bottom"):
