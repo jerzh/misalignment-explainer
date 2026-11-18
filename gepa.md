@@ -107,7 +107,7 @@ Use the same N in best-of-N as GEPA's number of T passes so compute is matched.
 
 How low can the loss go with an instruction that carries *no* information about the side task? This splits GEPA's best gain into a side-task part and an everything-else part (main-task summaries, literals, style). The pilot suggests the everything-else part is large.
 
-**Status (2026-11-18):** pilot running on the 5 pilot trajectories, `results/gepa_ortho/`, script `scripts/gepa_orthogonal.py`. Zero-shot arm done (partial plot: `results/gepa_ortho/infographic_partial.png`); GEPA arm in progress. Failed earlier attempts are in `results/archive/` (see its README).
+**Status (2026-11-18):** pilot on the 5 pilot trajectories, `results/gepa_ortho/`, script `scripts/gepa_orthogonal.py`. **Done** (both arms; $7.74). Results and reading: `todo.md`, "Done: Part 1b orthogonal pilot"; plot `results/gepa_ortho/infographic.png` (partial, zero-shot only: `infographic_partial.png`). Failed earlier attempts are in `results/archive/` (see its README).
 
 ### Spec as run
 
