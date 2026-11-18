@@ -1,15 +1,18 @@
 """Box plot of per-trajectory gain over `none` for every instruction condition.
 
-    python scripts/plot_conditions.py results/deepseek_v4_pro_instructions [out.png]
+    python scripts/plot_conditions.py results/deepseek_v4_pro_instructions [out.png] [--note "caveat shown under the title"]
 
 Two panels sharing the condition axis: the primary loss (U's tokens, scores_assistant.jsonl)
 and the ablation (all transcript tokens, scores.jsonl). Gain = loss(none) − loss(condition),
 in nats summed over the scored tokens of each transcript; positive means the instruction
-makes U's transcript easier to predict. Each dot is one transcript.
+makes U's transcript easier to predict. Each dot is one transcript. The x-axis covers the 1st–99th
+percentile of each panel's points (padded); points beyond it are drawn as arrowheads at the edge
+with a count. Boxes and medians use all the data.
 """
 
 import json
 import sys
+import textwrap
 from collections import defaultdict
 from pathlib import Path
 
@@ -44,13 +47,19 @@ def gains(path):
 
 
 def main():
-    res = Path(sys.argv[1])
-    out = Path(sys.argv[2]) if len(sys.argv) > 2 else res / "gain_over_none.png"
+    argv = sys.argv[1:]
+    note = None
+    if "--note" in argv:
+        i = argv.index("--note")
+        note = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
+    res = Path(argv[0])
+    out = Path(argv[1]) if len(argv) > 1 else res / "gain_over_none.png"
     panels = [("U's tokens (primary)", res / "scores_assistant.jsonl"), ("all tokens incl. tool outputs (ablation)", res / "scores.jsonl")]
     order = [c for _, (_, cs) in GROUPS.items() for c in cs][::-1]  # top-to-bottom as listed
     color = {c: col for _, (col, cs) in GROUPS.items() for c in cs}
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 5.2), sharey=True, facecolor=SURFACE, gridspec_kw={"wspace": 0.06})
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6.2), sharey=True, facecolor=SURFACE, gridspec_kw={"wspace": 0.08})
     rng = np.random.default_rng(0)
     for ax, (title, path) in zip(axes, panels):
         g, n = gains(path)
@@ -68,8 +77,21 @@ def main():
         for patch, c in zip(bp["boxes"], order):
             patch.set_facecolor(color[c] + "40")
             patch.set_edgecolor(color[c])
+        allv = np.concatenate(data)
+        lo, hi = np.percentile(allv, [1, 99])
+        pad = 0.08 * (hi - lo)
+        lo, hi = min(lo - pad, -pad), hi + pad
+        size, alpha = (10, 0.7) if n <= 60 else (6, 0.45)
         for y, c in enumerate(order, start=1):
-            ax.scatter(g[c], y + rng.uniform(-0.15, 0.15, len(g[c])), s=10, color=color[c], alpha=0.7, linewidths=0, zorder=3)
+            v = g[c]
+            inside = (v >= lo) & (v <= hi)
+            ax.scatter(v[inside], y + rng.uniform(-0.17, 0.17, inside.sum()), s=size, color=color[c], alpha=alpha, linewidths=0, zorder=3)
+            for side, sel, marker, ha in ((hi, v > hi, ">", "right"), (lo, v < lo, "<", "left")):
+                if sel.any():
+                    ax.scatter([side], [y], marker=marker, s=28, color=color[c], zorder=4, clip_on=False)
+                    ax.annotate(f"{sel.sum()} beyond", (side, y), xytext=(-8 if ha == "right" else 8, 9), textcoords="offset points",
+                                ha=ha, fontsize=7.5, color=INK_2)
+        ax.set_xlim(lo, hi)
         ax.set_title(f"{title}", loc="left", fontsize=10, color=INK)
         ax.set_xlabel("gain over none (nats per transcript)", color=INK_2, fontsize=9)
     axes[0].set_yticks(range(1, len(order) + 1), [LABELS[c] for c in order], color=INK, fontsize=9)
@@ -77,7 +99,10 @@ def main():
                for name, (col, _) in GROUPS.items()]
     fig.legend(handles=handles, loc="upper left", frameon=False, fontsize=9, labelcolor=INK, ncol=3, bbox_to_anchor=(0.015, 0.935))
     fig.suptitle(f"{res.name}: gain over the empty instruction, per transcript (n = {n})", x=0.02, y=0.985, ha="left", fontsize=12, color=INK)
-    fig.subplots_adjust(left=0.2, right=0.98, top=0.82, bottom=0.11)
+    if note:
+        wrapped = textwrap.fill(note, 150)
+        fig.text(0.02, 0.02, wrapped, fontsize=8.5, color=INK_2, ha="left", va="bottom", style="italic", linespacing=1.4)
+    fig.subplots_adjust(left=0.2, right=0.98, top=0.82, bottom=0.11 + (0.035 * (wrapped.count("\n") + 1) if note else 0))
     fig.savefig(out, dpi=200, facecolor=SURFACE)
     print(f"wrote {out}")
 

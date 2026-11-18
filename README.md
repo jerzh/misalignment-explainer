@@ -10,6 +10,14 @@ In this project, we'll test this framework on agentic coding transcripts. First,
 1. Does "instruction" similar to "side task prompt" actually result in lower reference model loss compared to empty/random instruction?
 2. If we use some basic algorithms to optimize "instruction" for low reference model loss, does it actually end up similar to "side task prompt"? (We don't have time for RL in this 3-day project, so we use simpler methods, like trial-and-error or soft prompting.)
 
+TODO: (Deepseek trajectories only)
+1. Sanity check how the trajectories were generated. Are they from the original LinuxArena dataset? Are the main/side task a diverse enough sample pool? Are they unmonitored? Any other quirks of how they were set up?
+2. Our ultimate goal with this "explainer" method is to understand if U is doing anything malicious, beyond what other monitoring methods can already see. Let's run a black-box monitor pass over all trajectories, subset to only the ones the monitor scores low, and see if the 
+3. Held-out eval: LLM judge(instruction similar to side task prompt?)
+4. GEPA: Want max gain over none AND max benign-ness (via instruction monitor)
+5. Consider using better reference model T (if no longer works)
+6. Per-step advice???
+
 ## Setup
 
 ### Trajectories (U)
