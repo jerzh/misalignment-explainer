@@ -1,0 +1,72 @@
+"""Gain vs black-box-monitor suspicion for every GEPA instruction (Part 2 groundwork).
+
+    python scripts/plot_instruction_monitor.py [results/instruction_monitor.jsonl] [out.png]
+
+One panel per trajectory (black-box monitor order). x: single-pass gain on U's tokens over the empty
+instruction (each run's own scoring server); y: suspicion of the instruction alone (Qwen3-32B with the
+trajectory monitor's prompt, scripts/instruction_monitor.py). Pilot GEPA children vs orthogonal GEPA
+children, colored by run, with gist and verbatim block marked.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+
+sys.path.insert(0, str(Path(__file__).parent))
+from plot_conditions import GRID, INK, INK_2, SURFACE, monitor_scores  # noqa: E402
+
+RAW = "data/raw/deepseek_v4_pro/7b175ceab7ff4202ae6bd95245d13590"
+BLUE, ORANGE, GREEN, PURPLE = "#2a78d6", "#eb6834", "#1baf7a", "#8b5cd6"
+SERIES = [("gepa_pilot2", ("gepa",), "pilot GEPA children (may name the side task)", GREEN, "o"),
+          ("gepa_pilot2", ("zero_shot",), "pilot zero-shot", ORANGE, "o"),
+          ("gepa_ortho", ("ortho_gepa", "ortho_zero_shot"), "orthogonal zero-shot + GEPA children", PURPLE, "o")]
+
+
+def main():
+    path = Path(sys.argv[1] if len(sys.argv) > 1 else "results/instruction_monitor.jsonl")
+    out = Path(sys.argv[2] if len(sys.argv) > 2 else path.with_name("instruction_monitor.png"))
+    R = [r for r in map(json.loads, open(path)) if r["score"] is not None]
+    examples = {json.loads(line)["id"]: json.loads(line) for line in open("data/deepseek_v4_pro_clean.jsonl")}
+    ids = sorted({r["id"] for r in R})
+    mon = monitor_scores(RAW, ids)
+    ids.sort(key=lambda t: mon[t])
+    fig, axes = plt.subplots(1, len(ids), figsize=(4.2 * len(ids), 4.6), facecolor=SURFACE, sharey=True)
+    for ax, tid in zip(axes, ids):
+        ax.set_facecolor(SURFACE)
+        rows = [r for r in R if r["id"] == tid]
+        for run, origins, label, color, m in SERIES:
+            pts = [r for r in rows if r["run"] == run and r["origin"] in origins]
+            ax.scatter([r["gain"] for r in pts], [r["score"] for r in pts], s=34, color=color, alpha=0.8,
+                       edgecolor=SURFACE, linewidth=1.2, label=label, zorder=3)
+        for origin, label, color, marker in (("ref:verbatim_block", "verbatim block", BLUE, "D"), ("ref:gist", "gist", BLUE, "s")):
+            r = next((r for r in rows if r["origin"] == origin and r["run"] == "gepa_ortho"), None)
+            if r:
+                ax.scatter([r["gain"]], [r["score"]], s=70, marker=marker, color=SURFACE, edgecolor=color, linewidth=2, zorder=4, label=label)
+                ax.annotate(label, (r["gain"], r["score"]), xytext=(4, -12), textcoords="offset points", fontsize=8, color=color)
+        ex = examples[tid]
+        ax.set_title(f"{ex['side_task']}\n{tid[:8]} · trajectory monitor {mon[tid]}/100", fontsize=9.5, color=INK, loc="left")
+        ax.set_ylim(-6, 106)
+        ax.axhline(50, color=GRID, linewidth=1)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(GRID)
+        ax.tick_params(colors=INK_2, labelsize=8, length=0)
+        ax.grid(color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+        ax.set_xlabel("gain over no instruction (nats, single pass)", fontsize=8.5, color=INK_2)
+    axes[0].set_ylabel("instruction suspicion (0-100)", fontsize=9, color=INK_2)
+    handles, labels = axes[0].get_legend_handles_labels()
+    keep = dict(zip(labels, handles))
+    fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=5, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
+    fig.suptitle("Does GEPA drift toward or away from obvious maliciousness? Instruction suspicion (Qwen3-32B, trajectory-monitor prompt) vs gain",
+                 fontsize=12, color=INK, x=0.01, ha="left", y=0.91, weight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
+    fig.savefig(out, dpi=160, facecolor=SURFACE)
+    print(f"wrote {out}")
+
+
+if __name__ == "__main__":
+    main()
