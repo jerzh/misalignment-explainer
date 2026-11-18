@@ -36,6 +36,7 @@ h2 { font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: u
 .meta dt { color: var(--fg-2); } .meta dd { margin: 0; font-family: var(--mono); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere; }
 details.side { background: var(--panel); border-radius: 6px; padding: 10px 14px; }
 details.side summary { cursor: pointer; font-weight: 500; }
+details.side code { font-family: var(--mono); font-size: 12.5px; }
 details.side pre { white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; margin: 10px 0 0; }
 .totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .tot { border-top: 2px solid var(--rule); padding-top: 8px; }
@@ -46,6 +47,11 @@ details.side pre { white-space: pre-wrap; font-family: var(--mono); font-size: 1
 .seg button { font: inherit; font-size: 13px; padding: 6px 12px; background: transparent; color: var(--fg); border: 0; cursor: pointer; }
 .seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .seg button:focus-visible, .step:focus-visible { outline: 2px solid rgb(var(--help)); outline-offset: 2px; }
+.show { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; border: 0; padding: 0; margin: 0; }
+.show legend { float: left; color: var(--fg-2); margin-right: 4px; padding: 0; }
+.show label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.show input:focus-visible { outline: 2px solid rgb(var(--help)); outline-offset: 2px; }
+.toks span.off { display: none; }
 .scale { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-2); }
 .scale .bar { width: 180px; height: 10px; border-radius: 2px;
   background: linear-gradient(90deg, rgba(var(--hurt),.85), var(--mid), rgba(var(--help),.85)); }
@@ -82,7 +88,8 @@ details.side pre { white-space: pre-wrap; font-family: var(--mono); font-size: 1
     <h1>Where the true side prompt helps T predict U's transcript</h1>
     <dl class="meta" id="meta"></dl>
   </header>
-  <details class="side"><summary>Hidden side task given to U</summary><pre id="side"></pre></details>
+  <details class="side"><summary>Hidden side task given to U (used in <code>verbatim</code>)</summary><pre id="side"></pre></details>
+  <details class="side" id="random-box" hidden><summary id="random-sum">Side task in the <code>random</code> prompt</summary><pre id="random-side"></pre></details>
   <section>
     <h2>Total transcript loss (nats)</h2>
     <div class="totals" id="totals"></div>
@@ -92,6 +99,13 @@ details.side pre { white-space: pre-wrap; font-family: var(--mono); font-size: 1
       <button type="button" id="cmp-none" aria-pressed="true">verbatim vs none</button>
       <button type="button" id="cmp-random" aria-pressed="false">verbatim vs random</button>
     </div>
+    <fieldset class="show">
+      <legend>Show</legend>
+      <label><input type="checkbox" id="show-text" checked> U's text</label>
+      <label><input type="checkbox" id="show-call" checked> U's tool calls</label>
+      <label><input type="checkbox" id="show-output" checked> Tool outputs</label>
+      <label><input type="checkbox" id="show-marker" checked> Turn markers</label>
+    </fieldset>
     <div class="scale"><span>harder</span><div class="bar"></div><span>easier with the true side prompt</span></div>
   </div>
   <p class="note" id="note"></p>
@@ -124,6 +138,12 @@ document.getElementById("meta").innerHTML = [
   ["trajectory", D.id], ["T", "Qwen3-32B"]
 ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 document.getElementById("side").textContent = D.side_block;
+if (D.random_side_block) {
+  document.getElementById("random-box").hidden = false;
+  document.getElementById("random-sum").innerHTML =
+    `Side task in the <code>random</code> prompt: another trajectory's, same environment (${D.random_side_task})`;
+  document.getElementById("random-side").textContent = D.random_side_block;
+}
 
 const totals = { none: 0, random: 0, verbatim: 0 };
 D.tokens.forEach(t => { for (const c in totals) totals[c] += t[c]; });
@@ -133,6 +153,25 @@ document.getElementById("totals").innerHTML = ["none", "random", "verbatim"].map
 
 const byMsg = D.messages.map(() => []);
 D.tokens.forEach(t => byMsg[t.msg].push(t));
+// Which part each token belongs to: U's visible text, U's tool calls, tool outputs, the user turn, or a
+// chat-template turn marker (same definition as segment_scores.py: special tokens, the role word and
+// newline after <|im_start|>, and the newline after <|im_end|>).
+const SPECIAL = new Set(["<|im_start|>", "<|im_end|>", "<tool_call>", "</tool_call>", "<tool_response>", "</tool_response>"]);
+const toks = D.tokens;
+toks.forEach((t, i) => {
+  const p1 = i > 0 ? toks[i - 1].text : "", p2 = i > 1 ? toks[i - 2].text : "";
+  t.marker = SPECIAL.has(t.text) || p1 === "<|im_start|>" || (t.text === "\n" && (p2 === "<|im_start|>" || p1 === "<|im_end|>"));
+});
+byMsg.forEach((ts, k) => {
+  const role = D.messages[k].role;
+  let inCall = false;
+  ts.forEach(t => {
+    if (role === "assistant" && t.text === "<tool_call>") inCall = true;
+    t.part = t.marker ? "marker" : role === "tool" ? "output" : role === "assistant" ? (inCall ? "call" : "text") : "user";
+  });
+});
+const show = { text: true, call: true, output: true, marker: true, user: true };
+const visible = t => show[t.part];
 
 const tr = document.getElementById("transcript");
 const nodes = D.messages.map((m, k) => {
@@ -147,24 +186,35 @@ const nodes = D.messages.map((m, k) => {
 });
 
 function render() {
-  const sums = byMsg.map(ts => ts.reduce((a, t) => a + delta(t), 0));
+  const sums = byMsg.map(ts => ts.reduce((a, t) => a + (visible(t) ? delta(t) : 0), 0));
+  const counts = byMsg.map(ts => ts.filter(visible).length);
   const max = Math.max(...sums.map(Math.abs), 1e-9);
   const total = sums.reduce((a, b) => a + b, 0);
+  const shown = counts.reduce((a, b) => a + b, 0);
+  const all = shown === D.tokens.length;
   document.getElementById("note").textContent =
     `Each token is shaded by its loss under ${base} minus its loss under verbatim (nats; saturates at ±${CLIP}). ` +
-    `Summed over the transcript the true side prompt saves ${total.toFixed(1)} nats relative to ${base}. Hover a token for its losses.`;
+    `Summed over ${all ? "the transcript" : `the ${shown} shown tokens`} the true side prompt saves ${total.toFixed(1)} nats relative to ${base}. Hover a token for its losses.`;
   document.getElementById("steps").innerHTML = D.messages.map((m, k) => {
+    if (!counts[k]) return "";
     const v = sums[k], w = Math.abs(v) / max * 50;
     const left = v >= 0 ? 50 : 50 - w;
     return `<button type="button" class="step" data-k="${k}"><span class="i">${k}</span><span>${m.role} · ${m.kind}</span>
-      <span class="n">${byMsg[k].length} tok</span>
+      <span class="n">${counts[k]} tok</span>
       <span class="track"><span class="zero"></span><span class="b" style="left:${left}%;width:${w}%;background:${v >= 0 ? "rgb(var(--help))" : "rgb(var(--hurt))"}"></span></span>
       <span class="s">${fmt(v)}</span></button>`;
   }).join("");
   nodes.forEach((el, k) => {
+    el.hidden = !counts[k];
     el.querySelector(".sum").textContent = `${fmt(sums[k])} nats`;
-    el.querySelectorAll(".toks span").forEach(s => { s.style.background = shade(delta(s._t)); });
+    el.querySelectorAll(".toks span").forEach(s => {
+      s.classList.toggle("off", !visible(s._t));
+      s.style.background = shade(delta(s._t));
+    });
   });
+}
+for (const part of ["text", "call", "output", "marker"]) {
+  document.getElementById("show-" + part).addEventListener("change", e => { show[part] = e.target.checked; render(); });
 }
 
 document.getElementById("steps").addEventListener("click", e => {

@@ -23,6 +23,15 @@ from segments import render, token_messages  # noqa: E402
 CONDITIONS = ["none", "random", "verbatim"]
 
 
+def random_prompt(dataset, tid):
+    """The side task swapped into the `random` condition for this trajectory, if there is one."""
+    rows = [r for r in map(json.loads, open(f"results/{dataset}/scores.jsonl")) if r["id"] == tid and r.get("random_source")]
+    if not rows:
+        return {}
+    src = next(e for e in map(json.loads, open(f"data/{dataset}.jsonl")) if e["id"] == rows[0]["random_source"])
+    return {"random_side_task": src["side_task"], "random_side_block": src["side_block"].strip()}
+
+
 def main():
     dataset, tid = sys.argv[1], sys.argv[2]
     out = Path(sys.argv[3] if len(sys.argv) > 3 else f"results/{dataset}/attribution_{tid[:8]}.json")
@@ -54,7 +63,8 @@ def main():
 
     out.write_text(json.dumps({
         "dataset": dataset, "id": tid, "environment": ex["environment"], "main_task": ex["main_task"],
-        "side_task": ex["side_task"], "side_block": ex["side_block"].strip(), "messages": msgs, "tokens": tokens,
+        "side_task": ex["side_task"], "side_block": ex["side_block"].strip(), **random_prompt(dataset, tid),
+        "messages": msgs, "tokens": tokens,
     }))
     totals = {c: sum(t[c] for t in tokens) for c in CONDITIONS}
     print(f"{n} tokens aligned -> {out}; total NLL " + ", ".join(f"{c}={v:.1f}" for c, v in totals.items()))
