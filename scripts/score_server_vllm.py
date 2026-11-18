@@ -8,7 +8,7 @@ Differences from score_server.py:
   - per-token NLL comes from vLLM's prompt log-probs (prompt_logprobs=0: the actual token's log-prob).
 Scores differ slightly from the HF server's, so compare instructions only within one server.
 Prompts are built exactly as in score_server.py (instruction-conditions prompt, tool schemas).
-Cache file is separate (--cache, default results/gepa_cache_vllm.jsonl).
+Cache file is separate (--cache, default results/gepa_cache_vllm.jsonl); use one cache per server config (TP size changes the numbers).
 """
 
 import argparse
@@ -40,7 +40,8 @@ class VLLMScorer(HFScorer):
         self.llm = LLM(model=args.model, tensor_parallel_size=args.tp, dtype="bfloat16",
                        max_model_len=131072 if args.yarn else 32768, hf_overrides=overrides,
                        gpu_memory_utilization=args.gpu_memory_utilization, enable_prefix_caching=False,
-                       max_num_batched_tokens=args.max_batched_tokens)
+                       max_num_batched_tokens=args.max_batched_tokens,
+                       disable_custom_all_reduce=True)  # its CUDA IPC isn't permitted in our pods (crashes at TP=4); NCCL is used instead
         self.params = SamplingParams(max_tokens=1, prompt_logprobs=0, temperature=0.0)
         self.layout = {}
         self.cache_path = Path(args.cache)

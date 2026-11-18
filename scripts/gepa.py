@@ -133,11 +133,19 @@ def dry_run_instruction(messages):
 
 
 class Server:
-    def __init__(self, url):
-        self.url = url.rstrip("/")
+    """Client for one or more scoring servers (comma-separated URLs). Each trajectory always goes to the
+    same server, so all of its scores come from one process; the run's trajectories are spread evenly."""
+
+    def __init__(self, url, ids=None):
+        self.urls = [u.strip().rstrip("/") for u in url.split(",") if u.strip()]
+        # Balanced and deterministic: the run's trajectories, sorted, round-robin over the servers.
+        self.assign = {tid: self.urls[k % len(self.urls)] for k, tid in enumerate(sorted(ids or []))}
+
+    def url_for(self, tid):
+        return self.assign.get(tid) or self.urls[int(tid[:8], 16) % len(self.urls)]
 
     def score(self, tid, instruction):
-        req = urllib.request.Request(f"{self.url}/score", data=json.dumps({"id": tid, "instruction": instruction}).encode(),
+        req = urllib.request.Request(f"{self.url_for(tid)}/score", data=json.dumps({"id": tid, "instruction": instruction}).encode(),
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=1800) as r:
             out = json.load(r)
@@ -343,7 +351,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ids", required=True, help="comma-separated trajectory id prefixes")
     p.add_argument("--examples", default="data/deepseek_v4_pro_clean.jsonl")
-    p.add_argument("--server", default="http://localhost:8000")
+    p.add_argument("--server", default="http://localhost:8000", help="scoring server URL(s), comma-separated")
     p.add_argument("--out", default="results/gepa_pilot")
     p.add_argument("--iters", type=int, default=15)
     p.add_argument("--zero-shot", type=int, default=3)
@@ -360,7 +368,7 @@ def main():
     examples = [json.loads(line) for line in open(args.examples)]
     chosen = [next(e for e in examples if e["id"].startswith(pre)) for pre in args.ids.split(",")]
     claude = Claude(args.budget, out / "calls.jsonl", args.dry_run, args.effort)
-    server = Server(args.server)
+    server = Server(args.server, ids=[e["id"] for e in chosen])
 
     def run_one(ex):
         try:
