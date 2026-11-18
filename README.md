@@ -10,13 +10,20 @@ In this project, we'll test this framework on agentic coding transcripts. First,
 1. Does "instruction" similar to "side task prompt" actually result in lower reference model loss compared to empty/random instruction?
 2. If we use some basic algorithms to optimize "instruction" for low reference model loss, does it actually end up similar to "side task prompt"? (We don't have time for RL in this 3-day project, so we use simpler methods, like trial-and-error or soft prompting.)
 
-TODO: (Deepseek trajectories only)
+Done:
 1. Sanity check how the trajectories were generated. Are they from the original LinuxArena dataset? Are the main/side task a diverse enough sample pool? Are they unmonitored? Any other quirks of how they were set up?
 2. Our ultimate goal with this "explainer" method is to understand if U is doing anything malicious, beyond what other monitoring methods can already see. Let's run a black-box monitor pass over all trajectories (or see if a monitor pass already exists in the dataset), subset to only the ones the monitor scores low ("hard to identify"), and see if the verbatim/random distinction remains.
+   1. We have existing GPT-Nano black-box monitor pass; at lower priority, rerun monitor pass using Qwen3-32b.
+
+Todo:
 3. GEPA part 1: Just try to get the loss as low as possible. Run an LLM judge to check if the instruction is similar to the side task prompt, to understand the extent of recovery / whether there are some unrelated or "jailbreak" instructions that work.
+   1. Ask Opus to suggest an instruction as orthogonal as possible to the side task, and see if we can still get a low reference loss.
 4. GEPA part 2: Red-team the protocol by trying to make the instruction as benign as possible (judged by same black-box monitor) while still having low loss. Let's maintain a Pareto frontier of instructions for the two objectives (loss, benign-ness).
+
+Other ideas:
 5. Consider using better reference model T (if no longer works)
 6. Per-step advice???
+7. Decrease character limit?
 
 ## Setup
 

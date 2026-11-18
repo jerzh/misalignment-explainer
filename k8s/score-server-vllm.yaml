@@ -1,9 +1,11 @@
-# GEPA scoring server, vLLM (tensor parallel over 4 H100s, h100-prime-001), interactive priority
-# (Flamingo raises a 4-GPU interactive pod to interactive-4gpu automatically). Delete it when done:
+# GEPA scoring servers, vLLM: two independent 2-GPU servers in one 4-GPU pod (ports 8000 and 8001),
+# h100-prime-001, interactive priority (Flamingo raises a 4-GPU interactive pod to interactive-4gpu).
+# Two TP=2 servers give ~2x the throughput of one; gepa.py sends each trajectory to a fixed server, so
+# all of a trajectory's scores come from one process (servers differ by the cross-process noise). Delete it when done:
 #   kubectl delete vcjob jerzh-vllm-server
 # Runs from ~/misalignment-explainer-next on vast-jerzh. Reach it from your machine with:
 #   fl run -f k8s/score-server-vllm.yaml   (needs ~/vllm-venv on vast-jerzh: uv venv + uv pip install vllm)
-#   kubectl port-forward pod/jerzh-vllm-server-main-0 8000:8000
+#   kubectl port-forward pod/jerzh-vllm-server-main-0 8000:8000 8001:8001
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -39,7 +41,13 @@ spec:
         workingDir: /nfs/users/jerzh/misalignment-explainer-next
         command: ["/bin/bash", "-c"]
         args:
-        - /nfs/users/jerzh/vllm-venv/bin/python scripts/score_server_vllm.py --examples data/deepseek_v4_pro_clean.jsonl --yarn --tp 4 --port 8000 --cache results/gepa_cache_vllm.jsonl
+        - |
+          for k in 0 1; do
+            CUDA_VISIBLE_DEVICES=$((2*k)),$((2*k+1)) VLLM_PORT=$((29500+100*k)) /nfs/users/jerzh/vllm-venv/bin/python scripts/score_server_vllm.py \
+              --examples data/deepseek_v4_pro_clean.jsonl --yarn --tp 2 --port $((8000+k)) --cache results/gepa_cache_vllm_tp2_s$k.jsonl \
+              > /tmp/server$k.log 2>&1 &
+          done
+          tail -F /tmp/server0.log /tmp/server1.log & wait -n; exit 1
         env:
         - name: HOME
           value: /nfs/users/jerzh
@@ -62,6 +70,7 @@ spec:
             nvidia.com/gpu: 4
         ports:
         - containerPort: 8000
+        - containerPort: 8001
         volumeMounts:
         - name: home
           mountPath: /nfs/users/jerzh
