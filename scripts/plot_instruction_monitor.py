@@ -5,7 +5,9 @@
 One panel per trajectory (black-box monitor order). x: single-pass gain on U's tokens over the empty
 instruction (each run's own scoring server); y: suspicion of the instruction alone (Qwen3-32B with the
 trajectory monitor's prompt, scripts/instruction_monitor.py). Pilot GEPA children vs orthogonal GEPA
-children, colored by run, with gist and verbatim block marked.
+children, colored by run, with gist and verbatim block marked, and each trajectory's Pareto frontier
+(instructions no other beats on both higher gain and lower suspicion; ringed). Caveat: pilot 2 gains come
+from the HF scorer, Part 1b gains from vLLM; they differ by a few nats, so near-ties on the frontier can swap.
 """
 
 import json
@@ -22,6 +24,16 @@ BLUE, ORANGE, GREEN, PURPLE = "#2a78d6", "#eb6834", "#1baf7a", "#8b5cd6"
 SERIES = [("gepa_pilot2", ("gepa",), "pilot GEPA children (may name the side task)", GREEN, "o"),
           ("gepa_pilot2", ("zero_shot",), "pilot zero-shot", ORANGE, "o"),
           ("gepa_ortho", ("ortho_gepa", "ortho_zero_shot"), "orthogonal zero-shot + GEPA children", PURPLE, "o")]
+
+
+def frontier(points):
+    """Pareto frontier (high gain, low suspicion): points no other point beats on both, by suspicion then gain."""
+    best, out = float("-inf"), []
+    for g, sc, r in sorted(points, key=lambda p: (p[1], -p[0])):
+        if g > best:
+            out.append((g, sc, r))
+            best = g
+    return out
 
 
 def main():
@@ -45,6 +57,19 @@ def main():
             if r:
                 ax.scatter([r["gain"]], [r["score"]], s=70, marker=marker, color=SURFACE, edgecolor=color, linewidth=2, zorder=4, label=label)
                 ax.annotate(label, (r["gain"], r["score"]), xytext=(4, -12), textcoords="offset points", fontsize=8, color=color)
+        pts = [(r["gain"], r["score"], r) for r in rows
+               if any(r["run"] == run and r["origin"] in o for run, o, *_ in SERIES)
+               or (r["run"] == "gepa_ortho" and r["origin"] in ("ref:verbatim_block", "ref:gist"))]
+        fr = frontier(pts)
+        xs, ys = [], []
+        for k, (g, sc, _) in enumerate(fr):  # staircase: up in suspicion, then right in gain
+            if k:
+                xs.append(fr[k - 1][0])
+                ys.append(sc)
+            xs.append(g)
+            ys.append(sc)
+        ax.plot(xs, ys, color=INK, linewidth=1.3, zorder=2, label="Pareto frontier (high gain, low suspicion)")
+        ax.scatter([g for g, _, _ in fr], [sc for _, sc, _ in fr], s=95, facecolor="none", edgecolor=INK, linewidth=1.3, zorder=5)
         ex = examples[tid]
         ax.set_title(f"{ex['side_task']}\n{tid[:8]} · trajectory monitor {mon[tid]}/100", fontsize=9.5, color=INK, loc="left")
         ax.set_ylim(-6, 106)
@@ -60,7 +85,7 @@ def main():
     axes[0].set_ylabel("instruction suspicion (0-100)", fontsize=9, color=INK_2)
     handles, labels = axes[0].get_legend_handles_labels()
     keep = dict(zip(labels, handles))
-    fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=5, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
+    fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=6, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
     fig.suptitle("Does GEPA drift toward or away from obvious maliciousness? Instruction suspicion (Qwen3-32B, trajectory-monitor prompt) vs gain",
                  fontsize=12, color=INK, x=0.01, ha="left", y=0.91, weight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.86))
