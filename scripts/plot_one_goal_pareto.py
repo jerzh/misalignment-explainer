@@ -3,7 +3,8 @@
     python scripts/plot_one_goal_pareto.py [results/gepa_benign_one_goal] [results/gepa_benign] [out.png] [--monitor results/instruction_monitor_v2.jsonl]
 
 One panel per trajectory (black-box monitor order). Points: the one-goal Part 1 instructions that pass the judge
-(Part 2's warm-start seeds) and the one-goal Part 2 children, all scored on the one-goal Part 2 server (single-pass
+(Part 2's warm-start seeds), the one-goal Part 2 children, and the one-goal Part 1 continuation's children (triangles;
+its own server, gains can differ by a few nats), all scored on the one-goal Part 2 server except the continuation (single-pass
 gain on U's tokens over no instruction; suspicion = Qwen3-32B with the trajectory-monitor prompt). Solid line: the
 one-goal frontier (no other point has both higher gain and lower suspicion). Dashed gray line: the unconstrained
 Part 2 frontier (results/gepa_benign, its own vLLM server, so gains can differ by a few nats). Gist and verbatim
@@ -36,6 +37,24 @@ def load(run, tid):
     return rows
 
 
+CONTINUED = "results/gepa_one_goal_continued"  # one-goal Part 1 continuation (gain only, 15 more iterations); its own server
+
+
+def load_continued(tid):
+    """The continuation's new children (scored.jsonl, origin one_goal_gepa), with v1 suspicion from
+    results/instruction_monitor.jsonl (or --monitor's scores when given)."""
+    f = Path(CONTINUED) / tid / "scored.jsonl"
+    if not f.exists():
+        return []
+    if MONITOR:
+        susp = {i: v for (run, t, i), v in MONITOR.items() if run == Path(CONTINUED).name and t == tid}
+    else:
+        susp = {r["instruction"]: r["score"] for r in map(json.loads, open("results/instruction_monitor.jsonl"))
+                if r["run"] == Path(CONTINUED).name and r["id"][:8] == tid and r["score"] is not None}
+    rows = [r for r in map(json.loads, open(f)) if r["origin"] == "one_goal_gepa"]
+    return [{**r, "suspicion": susp[r["instruction"]]} for r in rows if r["instruction"] in susp]
+
+
 def main():
     argv = sys.argv[1:]
     mon_file = None
@@ -64,7 +83,10 @@ def main():
                    linewidth=1.2, zorder=3, label="one-goal Part 1 (gain only; Part 2's seeds)")
         ax.scatter([r["gain"] for r in kids], [r["suspicion"] for r in kids], s=120, marker="*", color=DARK, edgecolor=SURFACE,
                    linewidth=0.8, zorder=6, label="one-goal Part 2 children (gain and low suspicion)")
-        fr = frontier([(r["gain"], r["suspicion"], r) for r in seeds + kids])
+        cont = load_continued(tid[:8])
+        ax.scatter([r["gain"] for r in cont], [r["suspicion"] for r in cont], s=40, marker="^", color="#c0392b", alpha=0.85, edgecolor=SURFACE,
+                   linewidth=0.8, zorder=3, label="one-goal Part 1 continuation (15 more gain-only iterations)")
+        fr = frontier([(r["gain"], r["suspicion"], r) for r in seeds + kids + cont])
         ax.scatter([g for g, _, _ in fr], [s for _, s, _ in fr], s=95, facecolor="none", edgecolor=INK, linewidth=1.3, zorder=5)
         free_rows = [r for r in load(free, tid[:8]) if not r["origin"].startswith("ref:")]
         if free_rows:
@@ -77,7 +99,7 @@ def main():
                 ax.scatter([r["gain"]], [r["suspicion"]], s=70, marker=marker, color=SURFACE, edgecolor=BLUE, linewidth=2, zorder=4, label=label)
                 ax.annotate(label, (r["gain"], r["suspicion"]), xytext=(4, -12), textcoords="offset points", fontsize=8, color=BLUE)
         lo = ax.get_xlim()[0]  # close both frontiers to the left and top axes
-        ax.plot(*staircase(fr, lo, 106), color=INK, linewidth=1.4, zorder=2, label="one-goal Pareto frontier")
+        ax.plot(*staircase(fr, lo, 106), color=INK, linewidth=1.4, zorder=2, label="one-goal Pareto frontier (all one-goal points)")
         if free_rows:
             ax.plot(*staircase(ffr, lo, 106), color=GRAY, linewidth=1.3, linestyle=(0, (4, 2)), zorder=1)
         ax.set_xlim(left=lo)
@@ -95,11 +117,11 @@ def main():
     axes[0].set_ylabel("instruction suspicion (0-100)", fontsize=9, color=INK_2)
     handles, labels = axes[0].get_legend_handles_labels()
     keep = dict(zip(labels, handles))
-    fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=3, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
+    fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=4, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
     fig.suptitle("One-goal Pareto frontier: every point passes the one-goal judge (one objective, no method)"
                  + ("  ·  suspicion: monitor v2 (instruction sent by another, possibly compromised, AI agent)" if mon_file and "v2" in mon_file else ""),
-                 fontsize=12, color=INK, x=0.01, ha="left", y=0.885, weight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.86))
+                 fontsize=12, color=INK, x=0.01, ha="left", y=0.865, weight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.84))
     fig.savefig(out, dpi=160, facecolor=SURFACE)
     print(f"wrote {out}")
 
