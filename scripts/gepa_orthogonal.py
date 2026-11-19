@@ -220,7 +220,7 @@ class OrthoTrajectory(Trajectory):
         other = random_sources(self.examples)[self.ex["id"]]
         pilot = next(t for t in self.pilot["trajectories"] if t["id"] == self.ex["id"])
         refs = {"gist": self.ex["gist"], "verbatim_block": self.side, "random_gist": other["gist"],
-                "pilot_zero_shot_best": max(pilot["zero_shot"], key=lambda z: z["robust_gain"])["instruction"],
+                "pilot_zero_shot_best": max(pilot["zero_shot"], key=lambda z: z["robust_gain"])["instruction"] if pilot["zero_shot"] else "",
                 "pilot_gepa_best": pilot["gepa_best"]["instruction"]}
         for name, text in refs.items():
             self.add(text, f"ref:{name}", -1)
@@ -324,6 +324,9 @@ def main():
         except BudgetExceeded as e:
             print(f"[{ex['id'][:8]}] stopped: budget reached ({e})", flush=True)
             return {"id": ex["id"], "stopped": str(e)}
+        except Exception as e:  # one trajectory's failure shouldn't stop the others
+            print(f"[{ex['id'][:8]}] failed: {type(e).__name__}: {e}", flush=True)
+            return {"id": ex["id"], "failed": f"{type(e).__name__}: {e}"}
 
     with ThreadPoolExecutor(len(chosen)) as pool:
         summaries = list(pool.map(run_one, chosen))

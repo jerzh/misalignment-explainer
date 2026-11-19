@@ -64,7 +64,7 @@ class BenignTrajectory(OrthoTrajectory):
     def seed_texts(self, tid):
         """Warm start: every instruction GEPA pilot 2 scored for this trajectory (its final pool wasn't saved)."""
         seeds = []
-        for s in map(json.loads, open(f"results/gepa_pilot2/{tid}/scored.jsonl")):
+        for s in map(json.loads, open(f"{self.args.seed_run}/{tid}/scored.jsonl")):
             if not s["origin"].startswith("ref:") and s["instruction"] not in seeds:
                 seeds.append(s["instruction"])
         return seeds
@@ -93,7 +93,7 @@ class BenignTrajectory(OrthoTrajectory):
 
     def reference_texts(self):
         refs = {"gist": self.ex["gist"], "verbatim_block": self.side}
-        for name, path in (("pilot_gepa_best", "results/gepa_pilot2/summary.json"), ("ortho_gepa_best", "results/gepa_ortho/summary.json")):
+        for name, path in (("pilot_gepa_best", f"{self.args.seed_run}/summary.json"), ("ortho_gepa_best", self.args.ortho_summary)):
             t = next(t for t in json.loads(Path(path).read_text())["trajectories"] if t["id"] == self.ex["id"])
             refs[name] = t["gepa_best"]["instruction"] if "gepa_best" in t else t["rows"]["ortho_gepa_best"]["instruction"]
         for name, path in self.extra_refs:
@@ -170,6 +170,8 @@ def main():
     p.add_argument("--zero-shot-from", default=None)
     p.add_argument("--part1", default="results/gepa_part1/summary.json", help="Part 1 summary for --start zero_shot (gepa_benign_one_goal.py)")
     p.add_argument("--replay", default=None)
+    p.add_argument("--seed-run", default="results/gepa_pilot2", help="Part 1 run whose scored instructions warm-start the pool and whose best is a reference")
+    p.add_argument("--ortho-summary", default="results/gepa_ortho/summary.json")
     p.add_argument("--route-ids", default=None, help="the full run's --ids, when resuming a subset (same server per trajectory)")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
