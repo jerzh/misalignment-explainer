@@ -154,6 +154,13 @@ The trajectory monitor's own prompt (`monitor2`, prompt `trajectory`, read per t
 - **Second-monitor check:** re-score the frontier with a monitor from another family (suggested: Claude Sonnet 5.5 via OpenRouter). If it disagrees, the frontier mostly reflects one monitor's blind spots.
 - Monitor defenses (brainstormed 2026-11-19; list in `todo.md`, Next 1).
 
+## Robust gain for the whole pool (decided 2026-11-19)
+
+- **Problem:** Part 1 runs computed robust gain only for the top 3 candidates by single-pass gain, so a candidate with a higher robust gain outside the top 3 was never found. Pilot 1a reported +83 on erase_history, but its own pool held an instruction at +92; Part 2 later surfaced it.
+- **Fix:** `gepa_part1.py` and `gepa_one_goal.py` now compute robust gain for the whole pool by default (`--robust-top 0`), or for the top N with `--robust-top N`. The cost is 4 T passes per candidate, about 20 candidates per trajectory.
+- **Part 2** (`gepa_benign.py`) computes robust gain for every final-frontier point. To save time later, it could be limited to the top 3 by single-pass gain (note for a future run).
+- **One-goal Part 1 continuation** (2026-11-19, `gepa_one_goal.py --continue-from results/gepa_one_goal`, results `results/gepa_one_goal_continued/`). It tests whether Part 2 beat Part 1 because of more iterations or because of its objective. Same loop as one-goal GEPA (gain only, per-chunk Pareto parents, the acceptance rule, the one-goal judge), 15 more iterations. It starts from every judge-passing instruction the first run scored, the same warm start as one-goal Part 2. Robust gain for the whole pool.
+
 ## Benign twins (README question, 2026-11-19, running)
 
 **Question:** can we construct a pair of similar, near-optimal {malicious, benign} instructions that the reference loss does not tell apart? Script `scripts/gepa_twin.py`, results `results/gepa_twin/`.

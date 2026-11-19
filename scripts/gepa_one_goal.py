@@ -97,7 +97,19 @@ class OneGoalTrajectory(Part1Trajectory):
             entry["judge_passed"] = self.judge(text)[0]
             ref_rows[name] = entry
         seeds = []
-        for z in pilot["zero_shot"]:
+        if self.args.continue_from:  # continuation: start from every judge-passing instruction the earlier run scored
+            prev = Path(self.args.continue_from) / tid
+            passed = {r["instruction"] for r in map(json.loads, open(prev / "seeds.jsonl")) if r["judge_passed"]}
+            texts = []
+            for r in map(json.loads, open(prev / "scored.jsonl")):
+                if (r["origin"] == "one_goal_gepa" or (r["origin"] == "seed:pilot_zero_shot" and r["instruction"] in passed)) and r["instruction"] not in texts:
+                    texts.append(r["instruction"])
+            for text in texts:
+                entry, scored = self.add(text, "seed:continued", 0)
+                entry["judge_passed"] = True
+                self.log("seeds.jsonl", {k: entry[k] for k in ("instruction", "gain", "judge_passed")})
+                seeds.append((entry, scored))
+        for z in ([] if self.args.continue_from else pilot["zero_shot"]):
             entry, scored = self.add(z["instruction"], "seed:pilot_zero_shot", 0)
             entry["judge_passed"] = self.judge(z["instruction"])[0]
             self.log("seeds.jsonl", {k: entry[k] for k in ("instruction", "gain", "judge_passed")})
@@ -120,15 +132,20 @@ class OneGoalTrajectory(Part1Trajectory):
                 self.pool.append((entry, scored))
             best_curve.append(max(best_curve[-1], max(e["gain"] for e, _ in self.pool)))
             print(f"[{tid}] it {it}: child {entry['gain']:+.1f}  best {best_curve[-1]:+.1f}  pool {len(self.pool)}  spent ${self.llm.spent:.2f}", flush=True)
-        children = sorted(self.children, key=lambda e: -e["gain"])  # every scored child passed the judge, pool or not
-        top = [{**{k: e[k] for k in ("instruction", "gain", "origin", "iteration")}, "robust_gain": self.robust(e["instruction"])[0]}
-               for e in children[:3]]
+        # every scored child passed the judge, pool or not. Robust gain for all of them (--robust-top 0, the default since
+        # 2026-11-19), or only the top N by single-pass gain: picking from a single-pass top 3 missed better instructions.
+        cands = self.children + ([e for e, _ in seeds] if self.args.continue_from else [])
+        uniq = list({e["instruction"]: e for e in sorted(cands, key=lambda e: -e["gain"])}.values())
+        uniq = uniq[: self.args.robust_top] if self.args.robust_top else uniq
+        ranked = sorted(({**{k: e[k] for k in ("instruction", "gain", "origin", "iteration")}, "robust_gain": self.robust(e["instruction"])[0]}
+                         for e in uniq), key=lambda e: -e["robust_gain"])
+        top = ranked[:3]
         summary = {"id": self.ex["id"], "side_task": self.ex["side_task"],
                    "refs": {k: {"instruction": v["instruction"], "gain": v["gain"], "judge_passed": v["judge_passed"],
                                 "robust_gain": self.robust(v["instruction"])[0]} for k, v in ref_rows.items()},
                    "seeds": [{"instruction": e["instruction"], "gain": e["gain"], "judge_passed": e["judge_passed"],
                               "robust_gain": self.robust(e["instruction"])[0]} for e, _ in seeds],
-                   "one_goal_best": max(top, key=lambda e: e["robust_gain"]) if top else None, "one_goal_top3": top,
+                   "one_goal_best": top[0] if top else None, "one_goal_top3": top, "n_robust": len(ranked),
                    "best_curve": best_curve, "pool_size": len(self.pool)}
         (self.dir / "summary.json").write_text(json.dumps(summary, indent=2))
         return summary
@@ -159,6 +176,8 @@ def main():
     p.add_argument("--zero-shot", type=int, default=0)
     p.add_argument("--zero-shot-from", default=None)
     p.add_argument("--replay", default=None)
+    p.add_argument("--continue-from", default=None, help="earlier one-goal run dir: seed the pool with every judge-passing instruction it scored")
+    p.add_argument("--robust-top", type=int, default=0, help="robust gain for the top N children by single-pass gain; 0 = all")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 

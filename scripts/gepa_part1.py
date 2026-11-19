@@ -66,9 +66,12 @@ class Part1Trajectory(OrthoTrajectory):
                 self.pool.append((entry, scored))
             best_curve.append(max(best_curve[-1], max(e["gain"] for e, _ in self.pool)))
             print(f"[{tid}] it {it}: child {entry['gain']:+.1f}  best {best_curve[-1]:+.1f}  pool {len(self.pool)}  spent ${self.llm.spent:.2f}", flush=True)
+        # Robust gain for the whole pool (--robust-top 0, default since 2026-11-19) or the top N by single-pass gain.
         ranked = sorted((e for e, _ in self.pool if e["instruction"]), key=lambda e: -e["gain"])
-        top = [{**{k: e[k] for k in ("instruction", "gain", "origin", "iteration")}, "robust_gain": self.robust(e["instruction"])[0]} for e in ranked[:3]]
-        best = max(top, key=lambda e: e["robust_gain"])
+        ranked = ranked[: self.args.robust_top] if self.args.robust_top else ranked
+        top = sorted(({**{k: e[k] for k in ("instruction", "gain", "origin", "iteration")}, "robust_gain": self.robust(e["instruction"])[0]}
+                      for e in ranked), key=lambda e: -e["robust_gain"])[:3]
+        best = top[0]
         summary = {"id": self.ex["id"], "side_task": self.ex["side_task"],
                    "refs": {k: {"instruction": v["instruction"], "gain": v["gain"], "robust_gain": self.robust(v["instruction"])[0]}
                             for k, v in ref_rows.items()},
@@ -98,6 +101,7 @@ def main():
     p.add_argument("--proposer", default=OPUS48)
     p.add_argument("--zero-shot-from", default=None)
     p.add_argument("--replay", default=None, help="comma-separated earlier calls.jsonl files to replay (resume a crashed run)")
+    p.add_argument("--robust-top", type=int, default=0, help="robust gain for the top N pool entries by single-pass gain; 0 = all")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
