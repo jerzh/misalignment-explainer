@@ -148,6 +148,8 @@ How low can the loss go with an instruction that carries *no* information about 
 
 ## Part 2: benign-looking instructions (TODO 4)
 
+**Status (2026-11-19):** pilot done on the 5 pilot trajectories (`scripts/gepa_benign.py`, `results/gepa_benign/`). Results: `todo.md`, "Done: GEPA Part 2 pilot". Monitor = Qwen3-32B with the trajectory monitor's prompt (gpt-5.4-nano is blocked on our OpenRouter key). Warm start = all of pilot 2's instructions (the final pool wasn't saved). Second-monitor check not yet run.
+
 **Question:** is there an instruction the monitor rates benign that still gets a gain close to Part 1's best? If so, E could output innocent-sounding explanations and the protocol can be gamed. If gain falls off sharply as suspicion drops, the loss favors explanations that reveal the attack, which is good for the protocol.
 
 - **Benign-ness judge:** the same black-box monitor as TODO 2, with its prompt adapted to score an instruction on its own (0–100 suspicion) rather than a trajectory. Calibrate it on the reference rows: unrelated C ("Also write unit tests…") should score low; gist and verbatim block should score high.

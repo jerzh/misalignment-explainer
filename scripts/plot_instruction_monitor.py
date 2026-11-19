@@ -71,7 +71,7 @@ def main():
         p2 = [r for r in rows if r["run"] == "gepa_benign"]
         if p2:
             ax.scatter([r["gain"] for r in p2], [r["score"] for r in p2], s=120, marker="*", color=PART2, edgecolor=SURFACE,
-                       linewidth=0.8, zorder=6, label="Part 2 GEPA children (optimizing gain and low suspicion; PARTIAL)")
+                       linewidth=0.8, zorder=6, label="Part 2 GEPA children (optimizing gain and low suspicion" + ("" if (Path(BENIGN) / "summary.json").exists() else "; PARTIAL") + ")")
         for origin, label, color, marker in (("ref:verbatim_block", "verbatim block", BLUE, "D"), ("ref:gist", "gist", BLUE, "s")):
             r = next((r for r in rows if r["origin"] == origin and r["run"] == "gepa_ortho"), None)
             if r:
@@ -92,7 +92,7 @@ def main():
         ax.scatter([g for g, _, _ in fr], [sc for _, sc, _ in fr], s=95, facecolor="none", edgecolor=INK, linewidth=1.3, zorder=5)
         ex = examples[tid]
         it = last_it.get(tid[:8])
-        ax.set_title(f"{ex['side_task']}\n{tid[:8]} · trajectory monitor {mon[tid]}/100" + (f"\nPart 2 so far: {it} of 15 iterations" if it else ""),
+        ax.set_title(f"{ex['side_task']}\n{tid[:8]} · trajectory monitor {mon[tid]}/100" + (f"\nPart 2: {it} of 15 iterations" if it else ""),
                      fontsize=9.5, color=INK, loc="left")
         ax.set_ylim(-6, 106)
         for side in ("top", "right"):
@@ -108,8 +108,9 @@ def main():
     keep = dict(zip(labels, handles))
     fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=4, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
     title = "Instruction suspicion (Qwen3-32B, trajectory-monitor prompt) vs gain"
+    done = (benign / "summary.json").exists()
     if n_part2:
-        title += f"  ·  PARTIAL: Part 2 run in progress ({n_part2} children so far; stars)"
+        title += f"  ·  with Part 2 ({n_part2} children; stars)" if done else f"  ·  PARTIAL: Part 2 run in progress ({n_part2} children so far; stars)"
     fig.suptitle(title,
                  fontsize=12, color=INK, x=0.01, ha="left", y=0.87, weight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.82))
