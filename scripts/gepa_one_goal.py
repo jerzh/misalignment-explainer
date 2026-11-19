@@ -115,7 +115,9 @@ class OneGoalTrajectory(Part1Trajectory):
             self.log("seeds.jsonl", {k: entry[k] for k in ("instruction", "gain", "judge_passed")})
             seeds.append((entry, scored))
         if not seeds:  # no zero-shot guesses (e.g. Opus content-filtered them all): start from the empty instruction
-            seeds.append(self.add("", "seed:none", 0))
+            entry, scored = self.add("", "seed:none", 0)
+            entry["judge_passed"] = None  # not judged: the empty instruction states no objective
+            seeds.append((entry, scored))
         self.pool, self.children = list(seeds), []
         best_curve = [max(e["gain"] for e, _ in self.pool)]
         for it in range(1, self.args.iters + 1):
