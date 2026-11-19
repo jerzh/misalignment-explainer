@@ -1,0 +1,40 @@
+# CPU pod for the resampled-dataset session (resampled.md): copies code/data to its own NFS dir
+# (/nfs/users/jerzh/misalignment-explainer-resampled) and runs CPU-side checks (token counts).
+#   kubectl --context h100-prime-001 apply -f k8s/resampled-sync-pod.yaml
+#   kubectl --context h100-prime-001 delete pod jerzh-resampled-sync   # when done
+apiVersion: v1
+kind: Pod
+metadata:
+  name: jerzh-resampled-sync
+spec:
+  priorityClassName: normal-batch
+  restartPolicy: Never
+  imagePullSecrets:
+  - name: docker
+  volumes:
+  - name: home
+    persistentVolumeClaim:
+      claimName: vast-jerzh
+  - name: hf-cache
+    persistentVolumeClaim:
+      claimName: nfs-huggingface-home
+  containers:
+  - name: sync
+    image: ghcr.io/alignmentresearch/flamingo-devbox:latest
+    command: ["bash", "-c", "mkdir -p /nfs/users/jerzh/misalignment-explainer-resampled && sleep 172800"]
+    env:
+    - name: HOME
+      value: /nfs/users/jerzh
+    - name: HF_HOME
+      value: /cache/huggingface
+    resources:
+      requests:
+        cpu: 4
+        memory: 16G
+      limits:
+        memory: 16G
+    volumeMounts:
+    - name: home
+      mountPath: /nfs/users/jerzh
+    - name: hf-cache
+      mountPath: /cache/huggingface

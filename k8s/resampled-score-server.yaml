@@ -1,0 +1,78 @@
+# Scoring servers for the resampled-dataset session (resampled.md): two TP=2 vLLM servers in one 4-GPU pod,
+# h100-prime-001, normal-batch priority, examples = data/flash_resampled_clean.jsonl, own caches under results/resampled/.
+# Runs from /nfs/users/jerzh/misalignment-explainer-resampled. Submit and reach it with:
+#   fl run -f k8s/resampled-score-server.yaml --dry-run > /tmp/x.yaml && kubectl --context h100-prime-001 create -f /tmp/x.yaml
+#   kubectl --context h100-prime-001 port-forward pod/jerzh-resampled-vllm-main-0 8020:8000 8021:8001
+#   kubectl --context h100-prime-001 delete vcjob jerzh-resampled-vllm   # when done
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jerzh-resampled-vllm
+  labels:
+    kueue.x-k8s.io/queue-name: farai
+spec:
+  backoffLimit: 0
+  podFailurePolicy:
+    rules:
+    - action: Ignore  # re-create the pod if it is preempted; scoring resumes where it stopped
+      onPodConditions:
+      - type: DisruptionTarget
+  template:
+    spec:
+      priorityClassName: normal-batch  # normal priority only (resampled session)
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: docker
+      volumes:
+      - name: home
+        persistentVolumeClaim:
+          claimName: vast-jerzh
+      - name: hf-cache
+        persistentVolumeClaim:
+          claimName: nfs-huggingface-home
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+      - name: score
+        image: ghcr.io/alignmentresearch/flamingo-devbox:latest
+        workingDir: /nfs/users/jerzh/misalignment-explainer-resampled
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          for k in 0 1; do
+            CUDA_VISIBLE_DEVICES=$((2*k)),$((2*k+1)) VLLM_PORT=$((29500+100*k)) /nfs/users/jerzh/vllm-venv/bin/python scripts/score_server_vllm.py \
+              --examples data/flash_resampled_clean.jsonl --yarn --tp 2 --port $((8000+k)) --cache results/resampled/cache_vllm_tp2_s$k.jsonl \
+              > /tmp/server$k.log 2>&1 &
+          done
+          tail -F /tmp/server0.log /tmp/server1.log & wait -n; exit 1
+        env:
+        - name: HOME
+          value: /nfs/users/jerzh
+        - name: HF_HOME
+          value: /cache/huggingface
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: huggingface
+              key: token
+              optional: true
+        resources:
+          requests:
+            cpu: 32
+            memory: 320G
+          limits:
+            memory: 320G
+            nvidia.com/gpu: 4
+        ports:
+        - containerPort: 8000
+        - containerPort: 8001
+        volumeMounts:
+        - name: home
+          mountPath: /nfs/users/jerzh
+        - name: hf-cache
+          mountPath: /cache/huggingface
+        - name: dshm
+          mountPath: /dev/shm
