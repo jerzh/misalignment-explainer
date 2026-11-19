@@ -18,21 +18,10 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).parent))
 from plot_conditions import GRID, INK, INK_2, SURFACE, monitor_scores  # noqa: E402
-from plot_instruction_monitor import frontier  # noqa: E402
+from plot_instruction_monitor import frontier, staircase  # noqa: E402
 
 RAW = "data/raw/deepseek_v4_pro/7b175ceab7ff4202ae6bd95245d13590"
 BLUE, ORANGE, DARK, GRAY = "#2a78d6", "#eb6834", "#1a1a19", "#8a8a85"
-
-
-def staircase(fr):
-    xs, ys = [], []
-    for k, (g, s, _) in enumerate(fr):  # up in suspicion, then right in gain
-        if k:
-            xs.append(fr[k - 1][0])
-            ys.append(s)
-        xs.append(g)
-        ys.append(s)
-    return xs, ys
 
 
 def load(run, tid):
@@ -60,12 +49,10 @@ def main():
         ax.scatter([r["gain"] for r in kids], [r["suspicion"] for r in kids], s=120, marker="*", color=DARK, edgecolor=SURFACE,
                    linewidth=0.8, zorder=6, label="one-goal Part 2 children (gain and low suspicion)")
         fr = frontier([(r["gain"], r["suspicion"], r) for r in seeds + kids])
-        ax.plot(*staircase(fr), color=INK, linewidth=1.4, zorder=2, label="one-goal Pareto frontier")
         ax.scatter([g for g, _, _ in fr], [s for _, s, _ in fr], s=95, facecolor="none", edgecolor=INK, linewidth=1.3, zorder=5)
         free_rows = [r for r in load(free, tid[:8]) if not r["origin"].startswith("ref:")]
         if free_rows:
             ffr = frontier([(r["gain"], r["suspicion"], r) for r in free_rows])
-            ax.plot(*staircase(ffr), color=GRAY, linewidth=1.3, linestyle=(0, (4, 2)), zorder=1)
             ax.scatter([g for g, _, _ in ffr], [s for _, s, _ in ffr], s=60, marker="X", color=GRAY, edgecolor=SURFACE, linewidth=0.8,
                        zorder=2, label="unconstrained Part 2 frontier (for comparison)")
         for origin, label, marker in (("ref:verbatim_block", "verbatim block", "D"), ("ref:gist", "gist", "s")):
@@ -73,6 +60,11 @@ def main():
             if r:
                 ax.scatter([r["gain"]], [r["suspicion"]], s=70, marker=marker, color=SURFACE, edgecolor=BLUE, linewidth=2, zorder=4, label=label)
                 ax.annotate(label, (r["gain"], r["suspicion"]), xytext=(4, -12), textcoords="offset points", fontsize=8, color=BLUE)
+        lo = ax.get_xlim()[0]  # close both frontiers to the left and top axes
+        ax.plot(*staircase(fr, lo, 106), color=INK, linewidth=1.4, zorder=2, label="one-goal Pareto frontier")
+        if free_rows:
+            ax.plot(*staircase(ffr, lo, 106), color=GRAY, linewidth=1.3, linestyle=(0, (4, 2)), zorder=1)
+        ax.set_xlim(left=lo)
         ex = examples[tid]
         ax.set_title(f"{ex['side_task']}\n{tid[:8]} · trajectory monitor {mon[tid]}/100", fontsize=9.5, color=INK, loc="left")
         ax.set_ylim(-6, 106)

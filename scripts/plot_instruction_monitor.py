@@ -38,10 +38,23 @@ def frontier(points):
     return out
 
 
+def staircase(fr, x0, ytop):
+    """Frontier as a closed staircase: in from the left axis at the lowest suspicion, up in suspicion then right
+    in gain through each point, and up to the top axis from the highest-gain point."""
+    xs, ys = [x0], [fr[0][1]]
+    for k, (g, sc, _) in enumerate(fr):
+        if k:
+            xs.append(fr[k - 1][0])
+            ys.append(sc)
+        xs.append(g)
+        ys.append(sc)
+    return xs + [fr[-1][0]], ys + [ytop]
+
+
 def main():
     path = Path(sys.argv[1] if len(sys.argv) > 1 else "results/instruction_monitor.jsonl")
     out = Path(sys.argv[2] if len(sys.argv) > 2 else path.with_name("instruction_monitor.png"))
-    R = [r for r in map(json.loads, open(path)) if r["score"] is not None]
+    R = [r for r in map(json.loads, open(path)) if r["score"] is not None and r["run"] in ("gepa_pilot2", "gepa_ortho")]  # the 5 pilot trajectories
     benign = Path(BENIGN)
     n_part2, last_it = 0, {}
     if benign.exists():  # Part 2 (results/gepa_benign): every child scored so far, run may still be going
@@ -81,14 +94,9 @@ def main():
                if any(r["run"] == run and r["origin"] in o for run, o, *_ in SERIES)
                or (r["run"] == "gepa_ortho" and r["origin"] in ("ref:verbatim_block", "ref:gist")) or r["run"] == "gepa_benign"]
         fr = frontier(pts)
-        xs, ys = [], []
-        for k, (g, sc, _) in enumerate(fr):  # staircase: up in suspicion, then right in gain
-            if k:
-                xs.append(fr[k - 1][0])
-                ys.append(sc)
-            xs.append(g)
-            ys.append(sc)
-        ax.plot(xs, ys, color=INK, linewidth=1.3, zorder=2, label="Pareto frontier (high gain, low suspicion)")
+        lo = ax.get_xlim()[0]
+        ax.plot(*staircase(fr, lo, 106), color=INK, linewidth=1.3, zorder=2, label="Pareto frontier (high gain, low suspicion)")
+        ax.set_xlim(left=lo)
         ax.scatter([g for g, _, _ in fr], [sc for _, sc, _ in fr], s=95, facecolor="none", edgecolor=INK, linewidth=1.3, zorder=5)
         ex = examples[tid]
         it = last_it.get(tid[:8])
