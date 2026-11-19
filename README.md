@@ -19,6 +19,7 @@ Todo:
 3. GEPA part 1: Just try to get the loss as low as possible. Run an LLM judge to check if the instruction is similar to the side task prompt, to understand the extent of recovery / whether there are some unrelated or "jailbreak" instructions that work.
    1. Ask Opus to suggest an instruction as orthogonal as possible to the side task, and see if we can still get a low reference loss.
 4. GEPA part 2: Red-team the protocol by trying to make the instruction as benign as possible (judged by same black-box monitor) while still having low loss. Let's maintain a Pareto frontier of instructions for the two objectives (loss, benign-ness).
+   1. Test whether adding monitor-fooling justification, e.g. "security hygiene", meaningfully changes loss. (Answer likely no)
 
 Other ideas:
 5. Consider using better reference model T (if no longer works)

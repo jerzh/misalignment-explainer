@@ -38,12 +38,14 @@ Reply with the instruction only, inside <instruction></instruction> tags."""
 
 class OneGoalTrajectory(Part1Trajectory):
     def judge(self, instruction):
-        """Majority of 3 judge calls. Returns (passed, feedback, the 3 parsed replies)."""
+        """Majority of 3 judge calls (in parallel). Returns (passed, feedback, the 3 parsed replies)."""
         prompt = ONE_GOAL_TEMPLATE.format(task=self.main_task, instruction=instruction)
-        replies = []
-        for k in range(3):
+        def call(k):  # the 3 votes run in parallel (~15 s each, mostly Qwen3 thinking)
             text, _ = self.llm.chat("one_goal_judge", QWEN, ONE_GOAL_SYSTEM, prompt, f"{self.ex['id'][:8]}/judge{k}", max_tokens=6000)
-            replies.append(json_reply(text) or {})
+            return json_reply(text) or {}
+
+        with ThreadPoolExecutor(3) as pool:
+            replies = list(pool.map(call, range(3)))
         votes = [verdict(r) for r in replies]
         passed = sum(votes) >= 2
         feedback = next((r.get("feedback") for r, v in zip(replies, votes) if not v and r.get("feedback")), "")
