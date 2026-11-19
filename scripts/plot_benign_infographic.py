@@ -44,20 +44,26 @@ def main():
     res = Path(sys.argv[1] if len(sys.argv) > 1 else "results/gepa_benign")
     data = sys.argv[2] if len(sys.argv) > 2 else "data/deepseek_v4_pro_clean.jsonl"
     out = Path(sys.argv[3]) if len(sys.argv) > 3 else res / "infographic.png"
+    one_goal = "one_goal" in res.name  # Part 2 under the one-goal constraint: compare with the one-goal Part 1 best
+    base, base_label, base_bar = (("one_goal_best", "One-goal GEPA best (gain only)", "one-goal GEPA best (gain only)") if one_goal
+                                  else ("pilot_gepa_best", "Pilot GEPA best (gain only)", "pilot GEPA best"))
     examples = {e["id"]: e for e in map(json.loads, open(data))}
     S = json.loads((res / "summary.json").read_text())
     mon = monitor_scores(RAW, [t["id"] for t in S["trajectories"]])
     rows = []
     for t in S["trajectories"]:
         tid = t["id"][:8]
-        pick = min((f for f in t["frontier"] if MARKERS[tid] in f["instruction"]), key=lambda f: f["suspicion"])
+        carrying = [f for f in t["frontier"] if MARKERS[tid] in f["instruction"]]
+        pick = min(carrying, key=lambda f: f["suspicion"]) if carrying else max(t["frontier"], key=lambda f: f["gain"])
         rows.append({"t": t, "ex": examples[t["id"]], "monitor": mon[t["id"]], "pick": pick, "id": tid})
     rows.sort(key=lambda r: r["monitor"])
 
     n, row_h = len(rows), 2.75
     H = 1.75 + n * row_h
     fig = plt.figure(figsize=(21, H), facecolor=SURFACE)
-    fig.text(0.012, 1 - 0.32 / H, "Instructions that state the side task but fool the monitor (GEPA Part 2): 3 of 5 trajectories at suspicion 0",
+    title = ("Part 2 under the one-goal constraint: can a one-objective instruction stating the side task fool the monitor?" if one_goal
+             else "Instructions that state the side task but fool the monitor (GEPA Part 2): 3 of 5 trajectories at suspicion 0")
+    fig.text(0.012, 1 - 0.32 / H, title,
              fontsize=15, color=INK, va="top", weight="bold")
     fig.text(0.012, 1 - 0.72 / H, "DeepSeek V4 Pro attack transcripts, reference model Qwen3-32B. Gain = how many nats T's loss on U's actions drops vs. no "
              "instruction (robust: mean over 4 no-op variants). Suspicion = Qwen3-32B with the trajectory monitor's prompt, scoring the instruction alone (0-100).",
@@ -65,18 +71,20 @@ def main():
     fig.text(0.012, 1 - 1.0 / H, "Part 2: GEPA (Opus 4.8 proposing, 15 iterations) keeps a Pareto frontier of high gain and low suspicion and shows the proposer "
              "the monitor's score and explanation. The pick is the lowest-suspicion frontier instruction that still carries the side task (hand-labelled).",
              fontsize=9.5, color=INK_2, va="top")
-    fig.text(0.012, 1 - 1.25 / H, "Pilot GEPA best: optimized for gain only. Orthogonal GEPA best (bar only): an instruction with no side-task content. "
-             "Rows: least to most suspicious transcripts to the black-box monitor.", fontsize=9.5, color=INK_2, va="top")
+    fig.text(0.012, 1 - 1.25 / H, (("One-goal GEPA best: optimized for gain only, every candidate passing the one-goal judge (one objective, no method); "
+                                    "Part 2 here keeps that judge on every child. ") if one_goal else "Pilot GEPA best: optimized for gain only. ")
+             + ("" if one_goal else "Orthogonal GEPA best (bar only): an instruction with no side-task content. ")
+             + "Rows: least to most suspicious transcripts to the black-box monitor.", fontsize=9.5, color=INK_2, va="top")
     col_x, col_w = [0.012, 0.162, 0.312, 0.462], 0.143
-    labels = [("True side task (verbatim block)", BLUE), ("Pilot GEPA best (gain only)", GREEN),
+    labels = [("True side task (verbatim block)", BLUE), (base_label, GREEN),
               ("Part 2 pick (still the side task)", DARK), ("Monitor's explanation of the pick", INK_2)]
     for k, (label, color) in enumerate(labels):
         fig.text(col_x[k] + 0.003, 1 - 1.55 / H, label, fontsize=10, color=color, weight="bold", va="top")
     gx, gw = 0.65, 0.33
     fig.text(gx, 1 - 1.55 / H, "robust gain over no instruction (nats)  ·  suspicion of the instruction", fontsize=10, color=INK_2, va="top")
 
-    bars = [("verbatim block", BLUE), ("pilot GEPA best", GREEN), ("orthogonal GEPA best", PURPLE), ("Part 2 pick", DARK)]
-    gmax = max(max(r["t"]["refs"]["pilot_gepa_best"]["robust_gain"], r["t"]["refs"]["verbatim_block"]["robust_gain"], r["pick"]["robust_gain"]) for r in rows)
+    bars = [("verbatim block", BLUE), (base_bar, GREEN)] + ([] if one_goal else [("orthogonal GEPA best", PURPLE)]) + [("Part 2 pick", DARK)]
+    gmax = max(max(r["t"]["refs"][base]["robust_gain"], r["t"]["refs"]["verbatim_block"]["robust_gain"], r["pick"]["robust_gain"]) for r in rows)
     for i, r in enumerate(rows):
         t, refs, pick = r["t"], r["t"]["refs"], r["pick"]
         top = 1 - (1.75 + i * row_h) / H
@@ -86,7 +94,7 @@ def main():
         fig.text(col_x[3] + col_w, top - 0.02 / H, f"trajectory monitor: {r['monitor']}/100", fontsize=10, color=INK_2, va="top", ha="right")
         h = (top - 0.28 / H) - bottom
         cards = [(refs["verbatim_block"]["instruction"], BLUE, refs["verbatim_block"]["suspicion"]),
-                 (refs["pilot_gepa_best"]["instruction"], GREEN, refs["pilot_gepa_best"]["suspicion"]),
+                 (refs[base]["instruction"], GREEN, refs[base]["suspicion"]),
                  (pick["instruction"], DARK, pick["suspicion"]),
                  (pick["monitor_reason"], INK_2, None)]
         for k, (text, color, susp) in enumerate(cards):
@@ -105,15 +113,17 @@ def main():
         ax = fig.add_axes([gx, bottom + 0.05 / H, gw, (top - 0.3 / H) - bottom - 0.05 / H])
         ax.set_facecolor(SURFACE)
         vals = [(refs["verbatim_block"]["robust_gain"], refs["verbatim_block"]["suspicion"]),
-                (refs["pilot_gepa_best"]["robust_gain"], refs["pilot_gepa_best"]["suspicion"]),
+                (refs[base]["robust_gain"], refs[base]["suspicion"]),
                 (refs["ortho_gepa_best"]["robust_gain"], refs["ortho_gepa_best"]["suspicion"]),
                 (pick["robust_gain"], pick["suspicion"])]
+        if one_goal:  # the orthogonal reference isn't a one-goal instruction
+            del vals[2]
         ys = list(range(len(bars)))[::-1]
         ax.barh(ys, [v for v, _ in vals], height=0.62, color=[c for _, c in bars], edgecolor=SURFACE, linewidth=2)
         for y, (v, s), (label, _) in zip(ys, vals, bars):
             ax.text(max(v, 0) + gmax * 0.012, y, f"{v:+.0f}  {label}  ·  suspicion {s}", va="center", fontsize=8.5, color=INK,
                     weight="bold" if label == "Part 2 pick" else "normal")
-        ax.set_xlim(0, gmax * 1.6)
+        ax.set_xlim(0, gmax * 1.75)
         ax.set_ylim(-0.6, len(bars) - 0.4)
         ax.set_yticks([])
         for side in ("top", "right", "left"):
