@@ -31,9 +31,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from gepa import MAX_CHARS, NOOP_VARIANTS, VAGUE, Server, render_action  # noqa: E402
+from gepa import MAX_CHARS, NOOP_VARIANTS, VAGUE, render_action  # noqa: E402
 from llm import OPUS48, BudgetExceeded, OpenRouter, tag_text  # noqa: E402
-from resampled_baselines import random_controls, usable_examples  # noqa: E402
+from resampled_baselines import Server, random_controls, usable_examples  # noqa: E402  (Server: waits through preemptions)
 
 N_INSTANCES = 8
 
@@ -142,6 +142,10 @@ class PairRun:
         return entry, scored
 
     def robust(self, instruction):
+        if self.args.no_robust:  # --no-robust (2026-11-19): single-pass gain stands in for the robust gain
+            scored = self.score_all(instruction)
+            g = [sum(s.chunk_gains(sc)) for s, sc in zip(self.samples, scored)]
+            return sum(g), g
         vals, per = [], []
         for f in NOOP_VARIANTS:
             scored = self.score_all(f(instruction))
@@ -264,7 +268,7 @@ class PairRun:
             rg, rps = self.robust(v["instruction"])
             ref_out[k] = {"instruction": v["instruction"], "gain": v["gain"], "sample_gains": v["sample_gains"],
                           "robust_gain": rg, "robust_sample_gains": rps}
-        summary = {"pair": self.pair, "side_task": self.side_task, "samples": [e["id"] for e in self.exs],
+        summary = {"pair": self.pair, "side_task": self.side_task, "samples": [e["id"] for e in self.exs], "robust": not self.args.no_robust,
                    "monitor2": [e["monitor2"] for e in self.exs], "success": [e["success"] for e in self.exs],
                    "random_source": other, "refs": ref_out, "pool": pool_rows, "best": pool_rows[0] if pool_rows else None,
                    "best_curve": best_curve, "pool_size": len(self.pool)}
@@ -292,6 +296,7 @@ def main():
     p.add_argument("--max-context-chars", type=int, default=400_000)
     p.add_argument("--replay", default=None, help="comma-separated earlier calls.jsonl files to replay (resume)")
     p.add_argument("--data", default="data/flash_resampled_clean.jsonl", help="dataset (e.g. data/flash_resampled4_clean.jsonl)")
+    p.add_argument("--no-robust", action="store_true", help="skip the no-op variants: robust_gain = single-pass gain (cached), summary gets robust: false")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 

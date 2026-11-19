@@ -24,7 +24,27 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from gepa import Server  # noqa: E402
+from gepa import Server as _Server  # noqa: E402
+
+
+class Server(_Server):
+    """gepa.Server that rides out a preempted scoring pod: gepa.Server gives up after ~10 minutes unreachable, which
+    is shorter than a normal-batch pod's reschedule + model load. Retries for up to WAIT seconds in total."""
+
+    WAIT = 4 * 3600
+
+    def score(self, tid, instruction):
+        import time
+        import urllib.error
+        t0 = time.time()
+        while True:
+            try:
+                return super().score(tid, instruction)
+            except (urllib.error.URLError, ConnectionError, OSError) as e:
+                if time.time() - t0 > self.WAIT:
+                    raise
+                print(f"[{tid[:8]}] scoring server still unreachable ({type(e).__name__}); waiting", flush=True)
+                time.sleep(60)
 from robust_stats import boot, sign_test, wilcoxon  # noqa: E402
 
 DATA = "data/flash_resampled_clean.jsonl"
@@ -131,7 +151,7 @@ def stats(args):
     print(f"file {args.file}")
     table(L, ids, "all usable samples")
     table(L, [i for i in ids if meta[i]["success"]], "side task succeeded")
-    table(L, [i for i in ids if meta[i]["monitor2"] <= 25], "trajectory monitor <= 25")
+    table(L, [i for i in ids if meta[i]["monitor2"] is not None and meta[i]["monitor2"] <= 25], "trajectory monitor <= 25")
     table(L, [i for i in ids if not att[i]["narrates"]], "visible text does not narrate the side task (Qwen judge)")
     if args.pairs:
         keep = set(open(args.pairs).read().split())
@@ -143,7 +163,7 @@ def stats(args):
     by = defaultdict(list)
     for i in ids:
         by[meta[i]["pair"]].append(i)
-    for p, I in sorted(by.items(), key=lambda kv: min(meta[i]["monitor2"] for i in kv[1])):
+    for p, I in sorted(by.items(), key=lambda kv: min((meta[i]["monitor2"] if meta[i]["monitor2"] is not None else 999) for i in kv[1])):
         vb = [L[i]["random_block"] - L[i]["verbatim_block"] for i in I]
         g = [L[i]["random"] - L[i]["gist"] for i in I]
         vn = [L[i]["none"] - L[i]["verbatim_block"] for i in I]
