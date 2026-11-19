@@ -2,8 +2,8 @@
 
     python scripts/plot_methods.py [out.png]
 
-Rows: the 5 pilot trajectories and the 14 extension ones (monitor <= 25), sorted by side-task share (Part 1a best
-minus orthogonal best). Markers on a shared robust-gain axis:
+Rows: the 5 pilot trajectories and the 14 extension ones (monitor <= 25), sorted by the trajectory monitor's score
+(side-task share = Part 1a best minus orthogonal best, shown on the right). Markers on a shared robust-gain axis:
   gist, verbatim block, orthogonal GEPA best, Part 1a best (unconstrained): the unconstrained Part 2 run's references
     (results/gepa_benign, results/gepa_benign_ext), so they share a scoring server with the Part 2 pick;
   one-goal GEPA best: results/gepa_one_goal (pilot), results/gepa_one_goal_ext (extension), its own server;
@@ -64,7 +64,7 @@ def main():
             share = vals["pilot_gepa_best"][0] - vals["ortho_gepa_best"][0]
             rows.append({"tid": tid, "task": t["side_task"], "vals": vals, "share": share, "pilot": benign.endswith("benign")})
     mon = monitor_scores(RAW, [r["tid"] for r in rows])
-    rows.sort(key=lambda r: r["share"])
+    rows.sort(key=lambda r: (-mon[r["tid"]], r["share"]))  # y=0 at the bottom: least suspicious rows end up at the top
     fig, ax = plt.subplots(figsize=(14, 0.42 * len(rows) + 2.4), facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
     for y, r in enumerate(rows):
@@ -106,8 +106,8 @@ def main():
         h.set_facecolor(h.get_edgecolor())
     fig.suptitle("Every GEPA variant on the 19 trajectories: robust gain by method (hollow = passes the instruction monitor, suspicion ≤ 25)",
                  fontsize=12.5, color=INK, x=0.01, ha="left", y=0.995, weight="bold")
-    fig.text(0.01, 0.905, "Rows sorted by side-task share = Part 1a best − orthogonal best (how much naming the side task adds over a coding-task "
-             "summary). Part 2 pick missing = no frontier instruction found that carries the side task (telltale-string check).",
+    fig.text(0.01, 0.893, "Rows sorted by the trajectory monitor's score, least suspicious transcripts at the top. Share = Part 1a best − orthogonal best "
+             "(how much naming the side task adds over a coding-task summary).\nPart 2 pick missing = no frontier instruction found that carries the side task (telltale-string check).",
              fontsize=8.5, color=INK_2)
     fig.tight_layout(rect=(0, 0, 0.95, 0.9))
     fig.savefig(out, dpi=160, facecolor=SURFACE)
