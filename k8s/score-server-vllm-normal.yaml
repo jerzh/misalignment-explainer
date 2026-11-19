@@ -1,0 +1,84 @@
+# Normal-priority copy of score-server-vllm.yaml (2026-11-19) for resuming the Part 1 run on the 14 low-monitor
+# trajectories. Its caches start as copies of the interactive servers' caches (gepa_cache_vllm_tp2_s{0,1}.jsonl ->
+# ..._normal_s{0,1}.jsonl), so the resumed run sees the same scores and its replay cache matches. Port-forward to 8010/8011:
+#   kubectl port-forward pod/jerzh-vllm-server-normal-main-0 8010:8000 8011:8001
+# GEPA scoring servers, vLLM: two independent 2-GPU servers in one 4-GPU pod (ports 8000 and 8001),
+# h100-prime-001, interactive priority (Flamingo raises a 4-GPU interactive pod to interactive-4gpu).
+# Two TP=2 servers give ~2x the throughput of one; gepa.py sends each trajectory to a fixed server, so
+# all of a trajectory's scores come from one process (servers differ by the cross-process noise). Delete it when done:
+#   kubectl delete vcjob jerzh-vllm-server
+# Runs from ~/misalignment-explainer-next on vast-jerzh. Reach it from your machine with:
+#   fl run -f k8s/score-server-vllm.yaml   (needs ~/vllm-venv on vast-jerzh: uv venv + uv pip install vllm)
+#   kubectl port-forward pod/jerzh-vllm-server-main-0 8000:8000 8001:8001
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jerzh-vllm-server-normal
+  labels:
+    kueue.x-k8s.io/queue-name: farai
+spec:
+  backoffLimit: 0
+  podFailurePolicy:
+    rules:
+    - action: Ignore  # re-create the pod if it is preempted; scoring resumes where it stopped
+      onPodConditions:
+      - type: DisruptionTarget
+  template:
+    spec:
+      priorityClassName: normal-batch  # normal priority (user-approved 2026-11-19); the interactive pod runs the one-goal GEPA
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: docker
+      volumes:
+      - name: home
+        persistentVolumeClaim:
+          claimName: vast-jerzh
+      - name: hf-cache
+        persistentVolumeClaim:
+          claimName: nfs-huggingface-home
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+      - name: score
+        image: ghcr.io/alignmentresearch/flamingo-devbox:latest
+        workingDir: /nfs/users/jerzh/misalignment-explainer-next
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          for k in 0 1; do
+            CUDA_VISIBLE_DEVICES=$((2*k)),$((2*k+1)) VLLM_PORT=$((29500+100*k)) /nfs/users/jerzh/vllm-venv/bin/python scripts/score_server_vllm.py \
+              --examples data/deepseek_v4_pro_clean.jsonl --yarn --tp 2 --port $((8000+k)) --cache results/gepa_cache_vllm_tp2_normal_s$k.jsonl \
+              > /tmp/server$k.log 2>&1 &
+          done
+          tail -F /tmp/server0.log /tmp/server1.log & wait -n; exit 1
+        env:
+        - name: HOME
+          value: /nfs/users/jerzh
+        - name: HF_HOME
+          value: /cache/huggingface
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: huggingface
+              key: token
+              optional: true
+        resources:
+          requests:
+            cpu: 32
+            memory: 320G
+          limits:
+            memory: 320G
+            nvidia.com/gpu: 4
+        ports:
+        - containerPort: 8000
+        - containerPort: 8001
+        volumeMounts:
+        - name: home
+          mountPath: /nfs/users/jerzh
+        - name: hf-cache
+          mountPath: /cache/huggingface
+        - name: dshm
+          mountPath: /dev/shm
