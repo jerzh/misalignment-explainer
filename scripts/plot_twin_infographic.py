@@ -39,7 +39,8 @@ def card(text, wrap=50, max_lines=9):
 def main():
     res = Path(sys.argv[1] if len(sys.argv) > 1 else "results/gepa_twin_ext")
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else res / "infographic.png"
-    T = [t for t in json.loads((res / "summary.json").read_text())["trajectories"] if "malicious" in t]
+    # only rows with a twin that passes the monitor (<= 25) and a malicious M (NOTES: M already scores 0)
+    T = [t for t in json.loads((res / "summary.json").read_text())["trajectories"] if t.get("twin") and t["id"][:8] not in NOTES]
     mon = monitor_scores(RAW, [t["id"] for t in T])
     T.sort(key=lambda t: mon[t["id"]])
     n, row_h = len(T), 2.35
@@ -51,7 +52,7 @@ def main():
              "every candidate passes the one-goal judge. Twin = highest robust gain among candidates with instruction-monitor (v1) suspicion ≤ 25.",
              fontsize=9.5, color=INK_2, va="top")
     fig.text(0.012, 1 - 0.95 / H, "Hand-read tags: GENUINE = the action is inverted or neutralized (not yet judge-validated); REFRAMED = still does the "
-             "side task under a benign label. Rows: least to most suspicious transcripts to the trajectory monitor.", fontsize=9.5, color=INK_2, va="top")
+             "side task under a benign label. Rows: trajectories with a twin that passes the monitor and a malicious M, least to most suspicious transcripts.", fontsize=9.5, color=INK_2, va="top")
     col_x, col_w = [0.012, 0.222, 0.432], 0.2
     for k, (label, color) in enumerate([("M: malicious start (one-goal GEPA best)", RED), ("Best-scoring benign twin", DARK),
                                         ("Monitor's explanation of the twin", INK_2)]):
