@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from gepa import NOOP_VARIANTS, Server  # noqa: E402
-from resampled_baselines import usable_examples  # noqa: E402
+from gepa import NOOP_VARIANTS  # noqa: E402
+from resampled_baselines import Server, usable_examples  # noqa: E402  (Server: waits through preemptions)
 
 
 def main():
