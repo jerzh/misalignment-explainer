@@ -35,8 +35,18 @@ class BudgetExceeded(Exception):
 
 
 class OpenRouter:
-    def __init__(self, budget, log_path, dry_run=False, dry_reply=None, opus_direct=False, opus_provider=None, opus_fallbacks=False):
+    def __init__(self, budget, log_path, dry_run=False, dry_reply=None, opus_direct=False, opus_provider=None, opus_fallbacks=False,
+                 replay=None):
         self.budget, self.spent, self.dry_run, self.dry_reply = budget, 0.0, dry_run, dry_reply
+        # replay: a previous run's calls.jsonl. A call with the same (tag, model, system, input) reuses the logged
+        # reply at no cost; tags name trajectory/iteration/attempt, so a resumed run replays its own path exactly
+        # as long as the scores (server cache) and the seeded parent choice are the same.
+        self.replay = {}
+        for path in ([replay] if isinstance(replay, (str, os.PathLike)) else replay or []):
+            for line in open(path):
+                c = json.loads(line)
+                self.replay[self.replay_key(c["tag"], c["model"], c["system"], c["input"])] = c
+        self.replayed = 0
         self.key = None if dry_run else os.environ["OPENROUTER_API_KEY"]
         self.opus_direct, self.opus_provider, self.opus_fallbacks = opus_direct, opus_provider, opus_fallbacks
         if opus_direct and not dry_run:
@@ -45,6 +55,10 @@ class OpenRouter:
             self.anthropic = anthropic.Anthropic()
         self.log_path = log_path
         self.lock = threading.Lock()
+
+    @staticmethod
+    def replay_key(tag, model, system, logged_input):
+        return json.dumps([tag, model, system, logged_input])
 
     def cost(self, model, usage):
         if usage.get("cost") is not None:
@@ -65,6 +79,12 @@ class OpenRouter:
             if self.spent + MARGIN.get(model, 0.05) > self.budget:
                 raise BudgetExceeded(f"spent ${self.spent:.2f} of ${self.budget:.2f}")
         t0 = time.time()
+        logged_input = content if isinstance(content, str) else [c.get("text", "") for c in content]
+        hit = self.replay.get(self.replay_key(tag, model, system, logged_input))
+        if hit is not None:
+            with self.lock:
+                self.replayed += 1
+            return hit["output"], hit["finish_reason"]
         if self.dry_run:
             text, finish, usage, cost = self.dry_reply(kind, system, content), "stop", {}, 0.0
         elif model in DIRECT_ID and self.opus_direct:

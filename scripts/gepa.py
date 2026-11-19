@@ -27,11 +27,13 @@ call once the total plus a margin would exceed --budget.
 """
 
 import argparse
+import http.client
 import json
 import random
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -147,8 +149,16 @@ class Server:
     def score(self, tid, instruction):
         req = urllib.request.Request(f"{self.url_for(tid)}/score", data=json.dumps({"id": tid, "instruction": instruction}).encode(),
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=1800) as r:
-            out = json.load(r)
+        for attempt in range(60):  # ride out a dropped port-forward (it restarts itself) for up to ~10 minutes
+            try:
+                with urllib.request.urlopen(req, timeout=1800) as r:
+                    out = json.load(r)
+                break
+            except (urllib.error.URLError, ConnectionError, http.client.HTTPException) as e:
+                if attempt == 59:
+                    raise
+                print(f"[{tid[:8]}] scoring server unreachable ({type(e).__name__}); retrying in 10 s", flush=True)
+                time.sleep(10)
         if "error" in out:
             raise RuntimeError(out["error"])
         return out
