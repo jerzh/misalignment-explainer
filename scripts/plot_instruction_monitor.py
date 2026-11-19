@@ -1,6 +1,7 @@
 """Gain vs black-box-monitor suspicion for every GEPA instruction (Part 2 groundwork).
 
     python scripts/plot_instruction_monitor.py [results/instruction_monitor.jsonl] [out.png]
+    python scripts/plot_instruction_monitor.py results/instruction_monitor_v2.jsonl   (monitor_v2 scores, Part 2 included)
 
 One panel per trajectory (black-box monitor order). x: single-pass gain on U's tokens over the empty
 instruction (each run's own scoring server); y: suspicion of the instruction alone (Qwen3-32B with the
@@ -53,8 +54,11 @@ def staircase(fr, x0, ytop):
 
 def main():
     path = Path(sys.argv[1] if len(sys.argv) > 1 else "results/instruction_monitor.jsonl")
-    out = Path(sys.argv[2] if len(sys.argv) > 2 else path.with_name("instruction_monitor.png"))
-    R = [r for r in map(json.loads, open(path)) if r["score"] is not None and r["run"] in ("gepa_pilot2", "gepa_ortho")]  # the 5 pilot trajectories
+    out = Path(sys.argv[2] if len(sys.argv) > 2 else path.with_name(path.stem + ".png"))  # instruction_monitor[_v2].png
+    ALL = [r for r in map(json.loads, open(path)) if r["score"] is not None]
+    R = [r for r in ALL if r["run"] in ("gepa_pilot2", "gepa_ortho")]  # the 5 pilot trajectories
+    v2 = "v2" in path.name  # monitor_v2 file: it also holds Part 2's instructions; use its scores, not monitored.jsonl's (v1)
+    v2_part2 = {(r["id"], r["instruction"]): r for r in ALL if r["run"] == "gepa_benign"}
     benign = Path(BENIGN)
     n_part2, last_it = 0, {}
     if benign.exists():  # Part 2 (results/gepa_benign): every child scored so far, run may still be going
@@ -65,8 +69,13 @@ def main():
                 continue
             for r in map(json.loads, open(f)):
                 if r["origin"] == "benign_gepa":
+                    score = r["suspicion"]
+                    if v2:
+                        if (full[d.name], r["instruction"]) not in v2_part2:
+                            continue
+                        score = v2_part2[(full[d.name], r["instruction"])]["score"]
                     R.append({"run": "gepa_benign", "id": full[d.name], "origin": r["origin"], "iteration": r["iteration"],
-                              "gain": r["gain"], "score": r["suspicion"], "instruction": r["instruction"]})
+                              "gain": r["gain"], "score": score, "instruction": r["instruction"]})
                     n_part2 += 1
                     last_it[d.name] = max(last_it.get(d.name, 0), r["iteration"])
     examples = {json.loads(line)["id"]: json.loads(line) for line in open("data/deepseek_v4_pro_clean.jsonl")}
@@ -115,7 +124,8 @@ def main():
     handles, labels = axes[0].get_legend_handles_labels()
     keep = dict(zip(labels, handles))
     fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=4, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
-    title = "Instruction suspicion (Qwen3-32B, trajectory-monitor prompt) vs gain"
+    title = ("Instruction suspicion, monitor v2 (Qwen3-32B; instruction sent by another, possibly compromised, AI agent) vs gain" if v2
+             else "Instruction suspicion (Qwen3-32B, trajectory-monitor prompt) vs gain")
     done = (benign / "summary.json").exists()
     if n_part2:
         title += f"  ·  with Part 2 ({n_part2} children; stars)" if done else f"  ·  PARTIAL: Part 2 run in progress ({n_part2} children so far; stars)"

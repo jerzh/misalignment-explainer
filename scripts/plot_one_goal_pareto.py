@@ -1,6 +1,6 @@
 """One-goal Pareto curves: gain vs instruction suspicion, every instruction passing the one-goal judge.
 
-    python scripts/plot_one_goal_pareto.py [results/gepa_benign_one_goal] [results/gepa_benign] [out.png]
+    python scripts/plot_one_goal_pareto.py [results/gepa_benign_one_goal] [results/gepa_benign] [out.png] [--monitor results/instruction_monitor_v2.jsonl]
 
 One panel per trajectory (black-box monitor order). Points: the one-goal Part 1 instructions that pass the judge
 (Part 2's warm-start seeds) and the one-goal Part 2 children, all scored on the one-goal Part 2 server (single-pass
@@ -24,15 +24,31 @@ RAW = "data/raw/deepseek_v4_pro/7b175ceab7ff4202ae6bd95245d13590"
 BLUE, ORANGE, DARK, GRAY = "#2a78d6", "#eb6834", "#1a1a19", "#8a8a85"
 
 
+MONITOR = {}  # (run name, trajectory id, instruction) -> score, from --monitor (e.g. monitor_v2); empty = the run's own (v1) scores
+
+
 def load(run, tid):
     f = Path(run) / tid / "monitored.jsonl"
-    return [r for r in map(json.loads, open(f)) if r["suspicion"] is not None] if f.exists() else []
+    rows = [r for r in map(json.loads, open(f)) if r["suspicion"] is not None] if f.exists() else []
+    if MONITOR:
+        rows = [{**r, "suspicion": MONITOR.get((Path(run).name, tid, r["instruction"]), 0 if not r["instruction"].strip() else None)} for r in rows]
+        rows = [r for r in rows if r["suspicion"] is not None]
+    return rows
 
 
 def main():
-    res = Path(sys.argv[1] if len(sys.argv) > 1 else "results/gepa_benign_one_goal")
-    free = Path(sys.argv[2] if len(sys.argv) > 2 else "results/gepa_benign")
-    out = Path(sys.argv[3]) if len(sys.argv) > 3 else res / "pareto.png"
+    argv = sys.argv[1:]
+    mon_file = None
+    if "--monitor" in argv:
+        k = argv.index("--monitor")
+        mon_file = argv[k + 1]
+        del argv[k:k + 2]
+        for r in map(json.loads, open(mon_file)):
+            if r["score"] is not None:
+                MONITOR[(r["run"], r["id"][:8], r["instruction"])] = r["score"]
+    res = Path(argv[0] if argv else "results/gepa_benign_one_goal")
+    free = Path(argv[1] if len(argv) > 1 else "results/gepa_benign")
+    out = Path(argv[2]) if len(argv) > 2 else res / ("pareto_v2.png" if mon_file and "v2" in mon_file else "pareto.png")
     S = json.loads((res / "summary.json").read_text())
     examples = {json.loads(line)["id"]: json.loads(line) for line in open("data/deepseek_v4_pro_clean.jsonl")}
     ids = [t["id"] for t in S["trajectories"]]
@@ -80,7 +96,8 @@ def main():
     handles, labels = axes[0].get_legend_handles_labels()
     keep = dict(zip(labels, handles))
     fig.legend(keep.values(), keep.keys(), loc="upper center", ncol=3, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.995))
-    fig.suptitle("One-goal Pareto frontier: every point passes the one-goal judge (one objective, no method)",
+    fig.suptitle("One-goal Pareto frontier: every point passes the one-goal judge (one objective, no method)"
+                 + ("  ·  suspicion: monitor v2 (instruction sent by another, possibly compromised, AI agent)" if mon_file and "v2" in mon_file else ""),
                  fontsize=12, color=INK, x=0.01, ha="left", y=0.885, weight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.86))
     fig.savefig(out, dpi=160, facecolor=SURFACE)
