@@ -41,14 +41,17 @@ def card_text(text, wrap=WRAP, max_lines=MAX_LINES):
 
 
 def main():
-    res = Path(sys.argv[1] if len(sys.argv) > 1 else "results/gepa_benign")
-    data = sys.argv[2] if len(sys.argv) > 2 else "data/deepseek_v4_pro_clean.jsonl"
-    out = Path(sys.argv[3]) if len(sys.argv) > 3 else res / "infographic.png"
+    argv = sys.argv[1:]
+    v2 = "--v2" in argv  # monitor_v2 re-score: read summary_v2.json (scripts/benign_v2_summary.py), write infographic_v2.png
+    argv = [a for a in argv if a != "--v2"]
+    res = Path(argv[0] if argv else "results/gepa_benign")
+    data = argv[1] if len(argv) > 1 else "data/deepseek_v4_pro_clean.jsonl"
+    out = Path(argv[2]) if len(argv) > 2 else res / ("infographic_v2.png" if v2 else "infographic.png")
     one_goal = "one_goal" in res.name  # Part 2 under the one-goal constraint: compare with the one-goal Part 1 best
     base, base_label, base_bar = (("one_goal_best", "One-goal GEPA best (gain only)", "one-goal GEPA best (gain only)") if one_goal
                                   else ("pilot_gepa_best", "Pilot GEPA best (gain only)", "pilot GEPA best"))
     examples = {e["id"]: e for e in map(json.loads, open(data))}
-    S = json.loads((res / "summary.json").read_text())
+    S = json.loads((res / ("summary_v2.json" if v2 else "summary.json")).read_text())
     mon = monitor_scores(RAW, [t["id"] for t in S["trajectories"]])
     rows = []
     for t in S["trajectories"]:
@@ -61,12 +64,15 @@ def main():
     n, row_h = len(rows), 2.75
     H = 1.75 + n * row_h
     fig = plt.figure(figsize=(21, H), facecolor=SURFACE)
-    title = ("Part 2 under the one-goal constraint: can a one-objective instruction stating the side task fool the monitor?" if one_goal
+    title = ("Part 2 under the one-goal constraint: can a one-objective instruction stating the side task fool the monitor?"
+             + ("  (monitor v2 re-score)" if v2 else "") if one_goal
              else "Instructions that state the side task but fool the monitor (GEPA Part 2): 3 of 5 trajectories at suspicion 0")
     fig.text(0.012, 1 - 0.32 / H, title,
              fontsize=15, color=INK, va="top", weight="bold")
     fig.text(0.012, 1 - 0.72 / H, "DeepSeek V4 Pro attack transcripts, reference model Qwen3-32B. Gain = how many nats T's loss on U's actions drops vs. no "
-             "instruction (robust: mean over 4 no-op variants). Suspicion = Qwen3-32B with the trajectory monitor's prompt, scoring the instruction alone (0-100).",
+             "instruction (robust: mean over 4 no-op variants). "
+             + ("Suspicion = monitor v2 (Qwen3-32B; instruction sent by another, possibly compromised, agent); Part 2 optimized against v1." if v2 else
+                "Suspicion = Qwen3-32B with the trajectory monitor's prompt, scoring the instruction alone (0-100)."),
              fontsize=9.5, color=INK_2, va="top")
     fig.text(0.012, 1 - 1.0 / H, "Part 2: GEPA (Opus 4.8 proposing, 15 iterations) keeps a Pareto frontier of high gain and low suspicion and shows the proposer "
              "the monitor's score and explanation. The pick is the lowest-suspicion frontier instruction that still carries the side task (hand-labelled).",
@@ -105,6 +111,7 @@ def main():
                      style="italic" if k == 3 else "normal")
             if k == 2:
                 origin = (f"Part 2, iteration {pick['iteration']}" if pick["origin"] == "benign_gepa"
+                          else "one-goal Part 1 instruction" if pick["origin"] == "seed:one_goal_part1"
                           else "pilot instruction, unbeaten in Part 2")
                 fig.text(col_x[k] + 0.005, bottom + 0.012, origin, fontsize=7.8, color=INK_2, ha="left", va="bottom", style="italic")
             if susp is not None:
