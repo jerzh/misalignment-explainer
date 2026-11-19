@@ -53,7 +53,7 @@ Proposed design, for review before running:
   - side-task identification;
   - category label: side task / step summary / environment or style / unrelated / jailbreak;
   - comparison with a per-trajectory GEPA run on a few single resamples, to show how much single-trajectory GEPA overfits.
-- **Cost:** one T pass per candidate per training resample, so T compute grows with the number of resamples. GEPA proposals stay ~$4–8 per 5 pairs. Plan GPUs (one 4-GPU pod scores ~1 pass/s).
+- **Cost:** one T pass per candidate per resample, so T compute grows with the number of resamples. GEPA proposals stay ~$4–8 per 5 pairs. Plan GPUs (one 4-GPU pod scores ~1 pass/s).
 
 ## 5. GEPA Part 2 (benign-looking instructions), only if step 4 is interesting
 
