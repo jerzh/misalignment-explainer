@@ -170,6 +170,7 @@ def main():
     p.add_argument("--zero-shot-from", default=None)
     p.add_argument("--part1", default="results/gepa_part1/summary.json", help="Part 1 summary for --start zero_shot (gepa_benign_one_goal.py)")
     p.add_argument("--replay", default=None)
+    p.add_argument("--route-ids", default=None, help="the full run's --ids, when resuming a subset (same server per trajectory)")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
@@ -184,7 +185,8 @@ def main():
                 cached.setdefault(r["id"], {})[r["instruction"]] = (r["score"], r["reason"])
     llm = OpenRouter(args.budget, out / "calls.jsonl", dry_run=args.dry_run, dry_reply=dry_reply,
                      replay=args.replay.split(",") if args.replay else None)
-    server = Server(args.server, ids=[e["id"] for e in chosen])
+    route = [next(e for e in examples if e["id"].startswith(pre)) for pre in args.route_ids.split(",")] if args.route_ids else chosen
+    server = Server(args.server, ids=[e["id"] for e in route])  # --route-ids: keep a resumed subset on the servers of the full run
     t0 = time.time()
 
     def run_one(ex):
@@ -193,6 +195,9 @@ def main():
         except BudgetExceeded as e:
             print(f"[{ex['id'][:8]}] stopped: budget reached ({e})", flush=True)
             return {"id": ex["id"], "stopped": str(e)}
+        except Exception as e:  # one trajectory's failure shouldn't stop the others
+            print(f"[{ex['id'][:8]}] failed: {type(e).__name__}: {e}", flush=True)
+            return {"id": ex["id"], "failed": f"{type(e).__name__}: {e}"}
 
     with ThreadPoolExecutor(len(chosen)) as pool:
         summaries = list(pool.map(run_one, chosen))

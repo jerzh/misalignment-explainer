@@ -9,6 +9,7 @@ OpenRouter to report its cost (`usage.include`); if a response lacks it, cost is
 token counts and PRICES. Before every call the client refuses to start if spent + margin > budget.
 """
 
+import http.client
 import json
 import os
 import re
@@ -97,7 +98,7 @@ class OpenRouter:
                 body["reasoning"] = {"effort": effort}
             if model in DIRECT_ID and self.opus_provider:
                 body["provider"] = {"order": [self.opus_provider], "allow_fallbacks": False}
-            for attempt in range(retries):
+            for attempt in range(max(retries, 5)):
                 try:
                     req = urllib.request.Request(URL, data=json.dumps(body).encode(),
                                                  headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
@@ -110,6 +111,11 @@ class OpenRouter:
                         time.sleep(5 * (attempt + 1))
                         continue
                     raise RuntimeError(f"OpenRouter HTTP {e.code} for {model}: {msg}") from None
+                except (http.client.HTTPException, urllib.error.URLError, ConnectionError, TimeoutError, json.JSONDecodeError) as e:
+                    if attempt + 1 < max(retries, 5):  # dropped or truncated responses (e.g. IncompleteRead): retry
+                        time.sleep(5 * (attempt + 1))
+                        continue
+                    raise RuntimeError(f"OpenRouter connection error for {model}: {type(e).__name__}: {e}") from None
             if "error" in out:
                 raise RuntimeError(f"OpenRouter error for {model}: {out['error']}")
             choice = out["choices"][0]
