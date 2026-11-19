@@ -64,7 +64,7 @@ def main():
     llm = OpenRouter(a.budget, out.with_name(out.stem + "_calls.jsonl"))
 
     def judge(ex):
-        prompt = TEMPLATE.format(task=ex["prompts"]["none"][1]["content"], side=ex["side_block"], actions=actions_text(ex["messages"], a.action_chars))
+        prompt = TEMPLATE.format(task=ex["prompts"]["none"][-1]["content"], side=ex["side_block"], actions=actions_text(ex["messages"], a.action_chars))
         votes = []
         for k in range(a.votes):
             text, _ = llm.chat("attempt", QWEN, SYSTEM, prompt, f"{ex['id'][:8]}/v{k}", max_tokens=6000)

@@ -29,19 +29,34 @@ from robust_stats import boot, sign_test, wilcoxon  # noqa: E402
 
 DATA = "data/flash_resampled_clean.jsonl"
 OUT = Path("results/resampled/baselines")
+ATTEMPT_FILES = ["results/resampled/attempt.jsonl", "results/resampled/attempt_scaffolds.jsonl"]
+TOKEN_FILES = ["results/resampled/tokens.jsonl", "results/resampled/tokens_scaffolds.jsonl"]
 COMPARE = [("random", "gist"), ("random_block", "verbatim_block"), ("random", "verbatim_block"), ("none", "gist"),
            ("none", "verbatim_block"), ("none", "random")]
 
 
 def usable_examples(data=DATA):
-    att = {r["id"]: r for r in map(json.loads, open("results/resampled/attempt.jsonl"))}
-    tok = {r["id"]: r["total"] for r in map(json.loads, open("results/resampled/tokens.jsonl"))}
+    att, tok = {}, {}
+    for f in ATTEMPT_FILES:
+        if Path(f).exists():
+            att.update({r["id"]: r for r in map(json.loads, open(f))})
+    for f in TOKEN_FILES:
+        if Path(f).exists():
+            tok.update({r["id"]: r["total"] for r in map(json.loads, open(f))})
     exs = [json.loads(line) for line in open(data)]
     return [e for e in exs if (e["success"] or att[e["id"]]["attempted"]) and tok[e["id"]] <= 131072], att
 
 
 def random_controls(exs, seed=0):
-    """pair -> (random side task's gist, its block): another side task from the same environment."""
+    """pair -> (random side task's gist, its block): another side task from the same environment.
+    Pairs that have a usable sample in the original two-run dataset (DATA) keep the draw made there, so adding the
+    scaffold runs (2026-11-19) doesn't change any pair's random control; other pairs draw with random.Random(pair)."""
+    base = _random_controls(usable_examples(DATA)[0], seed) if Path(DATA).exists() else {}
+    out = _random_controls(exs, seed, per_pair=True)
+    return {p: base.get(p, v) for p, v in out.items()}
+
+
+def _random_controls(exs, seed=0, per_pair=False):
     by_env = defaultdict(dict)
     for e in exs:
         by_env[e["environment"]][e["side_task"]] = (e["gist"], e["side_block"])
@@ -49,14 +64,16 @@ def random_controls(exs, seed=0):
     for pair in sorted({e["pair"] for e in exs}):
         env, _, side = pair.split("|")
         others = sorted(s for s in by_env[env] if s != side)
-        o = rng.choice(others)
+        o = (random.Random(pair) if per_pair else rng).choice(others)
         out[pair] = (o,) + by_env[env][o]
     return out
 
 
 def score(args):
-    exs, _ = usable_examples()
+    exs, _ = usable_examples(args.data)
     rnd = random_controls(exs)
+    if args.only_scaffolds:
+        exs = [e for e in exs if e.get("scaffold", "plain") != "plain"]
     server = Server(args.server, ids=[e["id"] for e in exs])
     OUT.mkdir(parents=True, exist_ok=True)
     done = set()
@@ -109,6 +126,7 @@ def stats(args):
         L[r["id"]][r["condition"]] = r["nll_sum"]
         meta[r["id"]] = r
     _, att = usable_examples()
+    src = {e["id"]: e.get("source", "?") for e in map(json.loads, open(args.data))}
     ids = sorted(L)
     print(f"file {args.file}")
     table(L, ids, "all usable samples")
@@ -118,6 +136,9 @@ def stats(args):
     if args.pairs:
         keep = set(open(args.pairs).read().split())
         table(L, [i for i in ids if meta[i]["pair"] in keep], "working-set pairs")
+    for so in sorted({src.get(i, "?") for i in ids}):
+        if len({src.get(i, "?") for i in ids}) > 1:
+            table(L, [i for i in ids if src.get(i, "?") == so], f"source = {so}")
     print("\n### per pair: gain (nats) of verbatim_block and gist over their random controls, per resample")
     by = defaultdict(list)
     for i in ids:
@@ -136,5 +157,9 @@ if __name__ == "__main__":
     p.add_argument("--server", default="http://localhost:8020,http://localhost:8021")
     p.add_argument("--file", default="scores_assistant.jsonl")
     p.add_argument("--pairs", default=None)
+    p.add_argument("--data", default=DATA)
+    p.add_argument("--out", default=str(OUT))
+    p.add_argument("--only-scaffolds", action="store_true", help="score only the Claude Code / Codex samples")
     a = p.parse_args()
+    OUT = Path(a.out)
     score(a) if a.cmd == "score" else stats(a)

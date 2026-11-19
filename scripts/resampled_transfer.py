@@ -25,8 +25,9 @@ def main():
     p.add_argument("--pairs", default="results/resampled/working_pairs.txt")
     p.add_argument("--server", default="http://localhost:8020,http://localhost:8021")
     p.add_argument("--out", default="results/resampled/transfer.json")
+    p.add_argument("--data", default="data/flash_resampled_clean.jsonl")
     a = p.parse_args()
-    exs, _ = usable_examples()
+    exs, _ = usable_examples(a.data)
     pairs = open(a.pairs).read().split()
     ids = [e["id"] for pr in pairs for e in exs if e["pair"] == pr]
     server = Server(a.server, ids=ids)

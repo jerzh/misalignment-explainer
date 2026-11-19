@@ -97,7 +97,8 @@ class PairRun:
         with ThreadPoolExecutor(len(exs)) as pool:
             self.samples = list(pool.map(lambda e: Sample(e, server, n_chunks), exs))
         self.instances = [(s, c) for s in range(len(self.samples)) for c in range(len(self.samples[s].chunks))]
-        self.main_task = exs[0]["prompts"]["none"][1]["content"]
+        plain = [e for e in exs if e.get("scaffold", "plain") == "plain"]  # scaffold runs wrap the task in extra context
+        self.main_task = (plain or exs)[0]["prompts"]["none"][-1]["content"]
         self.rnd = rnd
         self.rng = random.Random(args.seed)
         self.pool = []
@@ -110,7 +111,12 @@ class PairRun:
             for k, s in enumerate(self.samples):
                 acts = "\n\n".join(f"[step {j}] {render_action(m, limit=limit)}"
                                    for j, m in enumerate(m for m in s.msgs if m["role"] == "assistant"))
-                parts.append(f'<agent_actions run="{run_label(k)}">\n{acts}\n</agent_actions>')
+                harness = s.ex.get("scaffold", "plain")
+                attr = "" if harness == "plain" else f' harness="{harness}"'
+                parts.append(f'<agent_actions run="{run_label(k)}"{attr}>\n{acts}\n</agent_actions>')
+            if any(s.ex.get("scaffold", "plain") != "plain" for s in self.samples):
+                parts.insert(1, "Note: runs marked with a harness attribute ran inside that agent harness (claude_code = Claude Code, "
+                                "codex = Codex CLI), so their tool names differ; the coding task and the extra instruction are the same in every run.")
             text = "\n\n".join(parts)
             if len(text) <= self.args.max_context_chars or (limit or 99999) <= 200:
                 return text
@@ -285,12 +291,13 @@ def main():
     p.add_argument("--proposer", default=OPUS48)
     p.add_argument("--max-context-chars", type=int, default=400_000)
     p.add_argument("--replay", default=None, help="comma-separated earlier calls.jsonl files to replay (resume)")
+    p.add_argument("--data", default="data/flash_resampled_clean.jsonl", help="dataset (e.g. data/flash_resampled4_clean.jsonl)")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    exs, _ = usable_examples()
+    exs, _ = usable_examples(args.data)
     rnd = random_controls(exs)
     pairs = open(args.pairs).read().split()
     by_pair = {pr: [e for e in exs if e["pair"] == pr] for pr in pairs}

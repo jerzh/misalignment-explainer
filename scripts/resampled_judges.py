@@ -58,20 +58,20 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run", default="results/resampled/gepa_part1a")
     p.add_argument("--examples", default="data/flash_resampled_clean.jsonl")
-    p.add_argument("--raw", default="data/raw/flash_board")
+    p.add_argument("--raw", default="data/raw/flash_board,data/raw/flash_board_scaffolds")
     p.add_argument("--top", type=int, default=3)
     p.add_argument("--votes", type=int, default=3)
     p.add_argument("--budget", type=float, default=2.0)
     args = p.parse_args()
     run = Path(args.run)
     exs = {e["id"]: e for e in map(json.loads, open(args.examples))}
-    raw_of = {f.stem: f.parent for f in Path(args.raw).glob("*/*.json")}
+    raw_of = {f.stem: f.parent for r in args.raw.split(",") for f in Path(r).glob("*/*.json")}
     llm = OpenRouter(args.budget, run / "judges_calls.jsonl")
 
     items = []
     for sfile in sorted(run.glob("*/summary.json")):
         s = json.loads(sfile.read_text())
-        ex = exs[s["samples"][0]]
+        ex = next((exs[i] for i in s["samples"] if exs[i].get("scaffold", "plain") == "plain"), exs[s["samples"][0]])
         im.RAW = raw_of[ex["id"]]
         template = im.monitor_template(ex["id"])
         gists = {}
@@ -82,7 +82,7 @@ def main():
         rows += [{"kind": "pool", "rank": r, **v} for r, v in enumerate(s["pool"])]
         for row in rows:
             full = row["kind"].startswith("ref") or row["rank"] < args.top
-            items.append({"pair": s["pair"], "side_task": s["side_task"], "task": ex["prompts"]["none"][1]["content"], "side": ex["side_block"],
+            items.append({"pair": s["pair"], "side_task": s["side_task"], "task": ex["prompts"]["none"][-1]["content"], "side": ex["side_block"],
                           "template": template, "gists": gists, "full": full, **row})
 
     def judge(it):

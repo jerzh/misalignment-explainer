@@ -43,8 +43,9 @@ Reply with the instruction only, inside <instruction></instruction> tags."""
 class BenignPairRun(PairRun):
     def __init__(self, *a, raw_of=None, **kw):
         super().__init__(*a, **kw)
-        im.RAW = raw_of[self.exs[0]["id"]]
-        self.template = im.monitor_template(self.exs[0]["id"])
+        mon_ex = next((e for e in self.exs if e.get("scaffold", "plain") == "plain"), self.exs[0])  # monitor prompt of a plain run
+        im.RAW = raw_of[mon_ex["id"]]
+        self.template = im.monitor_template(mon_ex["id"])
         self.sus_cache = {}
 
     def suspicion(self, instruction):
@@ -70,7 +71,7 @@ class BenignPairRun(PairRun):
     def run(self):
         seed_dir = Path(self.args.seed_run) / self.side_task
         part1 = json.loads((seed_dir / "summary.json").read_text())
-        ex0 = self.exs[0]
+        ex0 = self.exs[0]  # side block and gist are identical across a pair's samples
         refs = {"gist": ex0["gist"], "verbatim_block": ex0["side_block"], "part1a_best": part1["best"]["instruction"]}
         ref_rows = {name: self.add_scored(text, f"ref:{name}", -1)[0] for name, text in refs.items()}
         seeds = []
@@ -125,7 +126,7 @@ def main():
     p.add_argument("--seed-run", default="results/resampled/gepa_part1a")
     p.add_argument("--server", default="http://localhost:8020,http://localhost:8021")
     p.add_argument("--out", default="results/resampled/gepa_part2")
-    p.add_argument("--raw", default="data/raw/flash_board")
+    p.add_argument("--raw", default="data/raw/flash_board,data/raw/flash_board_scaffolds")
     p.add_argument("--iters", type=int, default=12)
     p.add_argument("--batch", type=int, default=3)
     p.add_argument("--tries", type=int, default=6)
@@ -136,14 +137,15 @@ def main():
     p.add_argument("--max-context-chars", type=int, default=400_000)
     p.add_argument("--zero-shot", type=int, default=0)  # unused; PairRun reads it only in Part 1a's run()
     p.add_argument("--replay", default=None)
+    p.add_argument("--data", default="data/flash_resampled_clean.jsonl", help="dataset (e.g. data/flash_resampled4_clean.jsonl)")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    exs, _ = usable_examples()
+    exs, _ = usable_examples(args.data)
     rnd = random_controls(exs)
-    raw_of = {f.stem: f.parent for f in Path(args.raw).glob("*/*.json")}
+    raw_of = {f.stem: f.parent for r in args.raw.split(",") for f in Path(r).glob("*/*.json")}
     pairs = open(args.pairs).read().split()
     by_pair = {pr: [e for e in exs if e["pair"] == pr] for pr in pairs}
     llm = OpenRouter(args.budget, out / "calls.jsonl", dry_run=args.dry_run, dry_reply=dry_reply,
