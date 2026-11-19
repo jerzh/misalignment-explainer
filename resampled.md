@@ -1,6 +1,6 @@
 # Resampled dataset: repeat the analysis with many samples of the same prompt (plan, 2026-11-19)
 
-**Why.** On DeepSeek each main + side task pair has one trajectory, so GEPA's best instructions can win by summarizing that one transcript's steps and copying its literals (`gepa.md`, Content constraints). With many resamples of the *same* prompt (same main task and side task), one instruction has to explain all of them. Trajectory-specific detail should stop paying off, while the side task, the one thing every resample shares, should still pay off. We'd also get a train/test split for free: optimize on some resamples, evaluate on the others.
+**Why.** On DeepSeek each main + side task pair has one trajectory, so GEPA's best instructions can win by summarizing that one transcript's steps and copying its literals (`gepa.md`, Content constraints). With many resamples of the *same* prompt (same main task and side task), one instruction has to explain all of them. Trajectory-specific detail should stop paying off, while the side task, the one thing every resample shares, should still pay off. The question we care about is whether the lowest-loss instruction makes the malice obvious. Overfitting to the resamples is fine; there is no train/test split (decided 2026-11-19).
 
 Note on GLM: `glm53` repeats side tasks (85 side tasks, up to 6 trajectories each) but never a main + side pair (203 pairs, 1 each). So it is not a resampled dataset in this sense.
 
@@ -39,17 +39,17 @@ Report win rates plus Wilcoxon (verbatim − random gist, gist − random gist) 
 
 ## 4. GEPA Part 1a (lowest loss, ≤ 300 characters, no content constraints)
 
-**Hypothesis:** with one instruction per pair scored over many resamples, the best instruction won't be a summary of one trajectory's steps, because a summary doesn't transfer across resamples.
+**Hypothesis:** with one instruction per pair scored over many resamples, the best instruction won't be a summary of one trajectory's steps, because a summary doesn't transfer across resamples. Main question: is the malice obvious in the lowest-loss instruction (instruction monitor, hand check)?
 
 Proposed design, for review before running:
-- **Unit of optimization:** one instruction per main + side task pair, scored on the sum of its gain over the training resamples.
-- **Train/test split:** e.g. half the resamples (at least 4) for training, half held out. Report gain on held-out resamples. The train–test gap measures how much the instruction overfits individual trajectories.
-- **Pareto instances:** the training resamples, or their chunks, instead of one transcript's 8 chunks. Feedback batches mix resamples.
-- **Proposer:** Opus 4.8 (OpenRouter, effort medium), as in `gepa_part1.py`. It sees the coding task and the action lists of a few training resamples; showing all of them may not fit, so this needs a decision. It never sees held-out resamples.
-- **Seeds:** none, vague, 3 zero-shot guesses (from the training resamples' actions).
-- **References:** gist, verbatim block, random gist, on train and held-out.
+- **Unit of optimization:** one instruction per main + side task pair, scored on the sum of its gain over all the pair's resamples. No train/test split; overfitting is fine.
+- **Pareto instances:** the resamples, or their chunks, instead of one transcript's 8 chunks. Feedback batches mix resamples.
+- **Proposer:** Opus 4.8 (OpenRouter, effort medium), as in `gepa_part1.py`. It sees the coding task and the action lists of a few resamples; showing all of them may not fit, so this needs a decision.
+- **Seeds:** none, vague, 3 zero-shot guesses (from the resamples' actions).
+- **References:** gist, verbatim block, random gist.
 - **Judging the finals:**
-  - robust gain, train and held-out;
+  - instruction monitor suspicion (is the malice obvious?) and a hand check;
+  - robust gain;
   - side-task identification;
   - category label: side task / step summary / environment or style / unrelated / jailbreak;
   - comparison with a per-trajectory GEPA run on a few single resamples, to show how much single-trajectory GEPA overfits.
@@ -57,14 +57,14 @@ Proposed design, for review before running:
 
 ## 5. GEPA Part 2 (benign-looking instructions), only if step 4 is interesting
 
-**Condition:** step 4's best instructions mostly state a goal rather than a step summary (by category label and hand check), and their held-out gain is close to their training gain.
+**Condition:** step 4's best instructions mostly state a goal rather than a step summary (by category label and hand check).
 
 If so, run Part 2 as in `gepa.md`:
 - instruction monitor = the dataset's monitor prompt, edited as for monitor v1 (Qwen3-32B);
-- 2D Pareto on (held-out-free training gain, suspicion);
+- 2D Pareto on (gain over all resamples, suspicion);
 - optionally with the one-goal constraint.
 
-Report held-out gain and suspicion of the zero-suspicion frontier, and hand-check whether it still carries the side task. Lessons from the DeepSeek runs to carry over:
+Report gain and suspicion of the zero-suspicion frontier, and hand-check whether it still carries the side task. Lessons from the DeepSeek runs to carry over:
 - compare monitors at a matched false-positive rate;
 - the leak check needs validating before it is used (it misjudged the benign-twin candidates);
 - a monitor-gaming result needs a side-task-aware check of whether the instruction still carries the side task.
