@@ -8,6 +8,8 @@ explanation) plus the one-goal judge of scripts/gepa_one_goal.py on every child 
 feedback sent back in the same conversation, up to 2 rewrites); the rule is stated in the proposer prompt.
 Warm start: every instruction the one-goal Part 1 run (results/gepa_one_goal) scored for the trajectory that passes
 the judge: all of its GEPA children, plus the pilot zero-shot seeds that passed.
+With --start zero_shot (the 14 Part 1 extension trajectories): the pool starts from the Part 1 extension's
+zero-shot guesses that pass the judge, plus the empty instruction; results default to results/gepa_benign_one_goal_zs.
 """
 
 import json
@@ -44,6 +46,29 @@ class BenignOneGoalTrajectory(BenignTrajectory):
         return seeds
 
 
+class ZeroShotStartTrajectory(BenignOneGoalTrajectory):
+    """--start zero_shot (decided 2026-11-19, for the 14 Part 1 extension trajectories): no one-goal Part 1 run
+    exists for them, so the pool starts from the Part 1 extension's 3 zero-shot Opus guesses that pass the
+    one-goal judge (majority of 3; verdicts logged in seeds.jsonl), plus the empty instruction so the pool is
+    never empty. References: gist, verbatim block, the Part 1 extension's GEPA best."""
+    seed_origin = "seed:part1_zero_shot"
+    extra_refs = ()
+
+    def reference_texts(self):
+        t = next(t for t in json.loads(Path(self.args.part1).read_text())["trajectories"] if t["id"] == self.ex["id"])
+        return {"gist": self.ex["gist"], "verbatim_block": self.side, "part1_gepa_best": t["gepa_best"]["instruction"]}
+
+    def seed_texts(self, tid):
+        t = next(t for t in json.loads(Path(self.args.part1).read_text())["trajectories"] if t["id"] == self.ex["id"])
+        seeds = [""]
+        for z in t["zero_shot"]:
+            passed = self.judge(z["instruction"])[0]
+            self.log("seeds.jsonl", {"instruction": z["instruction"], "judge_passed": passed})
+            if passed and z["instruction"] not in seeds:
+                seeds.append(z["instruction"])
+        return seeds
+
+
 _benign_dry_reply = gepa_benign.dry_reply
 
 
@@ -54,8 +79,13 @@ def dry_reply(kind, system, content):
 
 
 if __name__ == "__main__":
-    gepa_benign.TRAJECTORY = BenignOneGoalTrajectory
+    start = "warm"
+    if "--start" in sys.argv:  # not a gepa_benign flag: strip it before gepa_benign.main parses argv
+        k = sys.argv.index("--start")
+        start = sys.argv[k + 1]
+        del sys.argv[k:k + 2]
+    gepa_benign.TRAJECTORY = ZeroShotStartTrajectory if start == "zero_shot" else BenignOneGoalTrajectory
     gepa_benign.dry_reply = dry_reply
     if "--out" not in sys.argv:
-        sys.argv += ["--out", "results/gepa_benign_one_goal"]
+        sys.argv += ["--out", "results/gepa_benign_one_goal" + ("_zs" if start == "zero_shot" else "")]
     gepa_benign.main()

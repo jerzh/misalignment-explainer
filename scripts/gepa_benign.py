@@ -91,8 +91,7 @@ class BenignTrajectory(OrthoTrajectory):
         self.log("monitored.jsonl", {k: entry[k] for k in ("instruction", "origin", "iteration", "gain", "suspicion", "monitor_reason", "parent")})
         return entry, scored
 
-    def run(self):
-        tid = self.ex["id"][:8]
+    def reference_texts(self):
         refs = {"gist": self.ex["gist"], "verbatim_block": self.side}
         for name, path in (("pilot_gepa_best", "results/gepa_pilot2/summary.json"), ("ortho_gepa_best", "results/gepa_ortho/summary.json")):
             t = next(t for t in json.loads(Path(path).read_text())["trajectories"] if t["id"] == self.ex["id"])
@@ -100,6 +99,11 @@ class BenignTrajectory(OrthoTrajectory):
         for name, path in self.extra_refs:
             t = next(t for t in json.loads(Path(path).read_text())["trajectories"] if t["id"] == self.ex["id"])
             refs[name] = t[name]["instruction"]
+        return refs
+
+    def run(self):
+        tid = self.ex["id"][:8]
+        refs = self.reference_texts()
         ref_rows = {name: self.add_scored(text, f"ref:{name}", -1)[0] for name, text in refs.items()}
 
         seeds = self.seed_texts(tid)
@@ -164,6 +168,7 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--proposer", default=OPUS48)
     p.add_argument("--zero-shot-from", default=None)
+    p.add_argument("--part1", default="results/gepa_part1/summary.json", help="Part 1 summary for --start zero_shot (gepa_benign_one_goal.py)")
     p.add_argument("--replay", default=None)
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
