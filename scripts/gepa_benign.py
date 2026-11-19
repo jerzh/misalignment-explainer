@@ -57,6 +57,18 @@ class BenignTrajectory(OrthoTrajectory):
         self.template = monitor_template(ex["id"])
         self.cached = cached_suspicion
 
+    proposer_system = PROPOSER_SYSTEM
+    seed_origin = "seed:pilot2"
+    extra_refs = ()  # (name, summary path) pairs whose best instruction is scored as a reference
+
+    def seed_texts(self, tid):
+        """Warm start: every instruction GEPA pilot 2 scored for this trajectory (its final pool wasn't saved)."""
+        seeds = []
+        for s in map(json.loads, open(f"results/gepa_pilot2/{tid}/scored.jsonl")):
+            if not s["origin"].startswith("ref:") and s["instruction"] not in seeds:
+                seeds.append(s["instruction"])
+        return seeds
+
     def leak_check(self, instruction):  # Part 2 has no content constraints
         return True, ""
 
@@ -85,13 +97,13 @@ class BenignTrajectory(OrthoTrajectory):
         for name, path in (("pilot_gepa_best", "results/gepa_pilot2/summary.json"), ("ortho_gepa_best", "results/gepa_ortho/summary.json")):
             t = next(t for t in json.loads(Path(path).read_text())["trajectories"] if t["id"] == self.ex["id"])
             refs[name] = t["gepa_best"]["instruction"] if "gepa_best" in t else t["rows"]["ortho_gepa_best"]["instruction"]
+        for name, path in self.extra_refs:
+            t = next(t for t in json.loads(Path(path).read_text())["trajectories"] if t["id"] == self.ex["id"])
+            refs[name] = t[name]["instruction"]
         ref_rows = {name: self.add_scored(text, f"ref:{name}", -1)[0] for name, text in refs.items()}
 
-        seeds = []
-        for s in map(json.loads, open(f"results/gepa_pilot2/{tid}/scored.jsonl")):
-            if not s["origin"].startswith("ref:") and s["instruction"] not in seeds:
-                seeds.append(s["instruction"])
-        self.pool = [self.add_scored(text, "seed:pilot2", 0) for text in seeds]
+        seeds = self.seed_texts(tid)
+        self.pool = [self.add_scored(text, self.seed_origin, 0) for text in seeds]
         curve = []
         for it in range(1, self.args.iters + 1):
             front = pareto([e for e, _ in self.pool])
@@ -100,7 +112,7 @@ class BenignTrajectory(OrthoTrajectory):
             batch = self.pick_batch(parent)
             fb = (self.feedback(parent, parent_scored, batch)
                   + f"\n\nReviewer's rating of the current instruction: {parent['suspicion']}/100.\nReviewer's explanation: {parent['monitor_reason']}")
-            child, attempts, reasons = self.propose(PROPOSER_SYSTEM, fb, f"{tid}/it{it}")
+            child, attempts, reasons = self.propose(self.proposer_system, fb, f"{tid}/it{it}")
             if not child:
                 self.log("rejected.jsonl", {"iteration": it, "attempts": attempts, "rejections": reasons})
                 print(f"[{tid}] it {it}: rejected ({'; '.join(reasons)[:120]})", flush=True)
@@ -123,6 +135,9 @@ class BenignTrajectory(OrthoTrajectory):
                    "frontier": finals, "frontier_curve": curve, "pool_size": len(self.pool), "n_seeds": len(seeds)}
         (self.dir / "summary.json").write_text(json.dumps(summary, indent=2))
         return summary
+
+
+TRAJECTORY = BenignTrajectory  # gepa_benign_one_goal.py swaps in its subclass
 
 
 def dry_reply(kind, system, content):
@@ -149,6 +164,7 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--proposer", default=OPUS48)
     p.add_argument("--zero-shot-from", default=None)
+    p.add_argument("--replay", default=None)
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
@@ -161,13 +177,14 @@ def main():
         for r in map(json.loads, open("results/instruction_monitor.jsonl")):
             if r["score"] is not None:
                 cached.setdefault(r["id"], {})[r["instruction"]] = (r["score"], r["reason"])
-    llm = OpenRouter(args.budget, out / "calls.jsonl", dry_run=args.dry_run, dry_reply=dry_reply)
+    llm = OpenRouter(args.budget, out / "calls.jsonl", dry_run=args.dry_run, dry_reply=dry_reply,
+                     replay=args.replay.split(",") if args.replay else None)
     server = Server(args.server, ids=[e["id"] for e in chosen])
     t0 = time.time()
 
     def run_one(ex):
         try:
-            return BenignTrajectory(ex, server, llm, out, args, examples, cached.get(ex["id"], {})).run()
+            return TRAJECTORY(ex, server, llm, out, args, examples, cached.get(ex["id"], {})).run()
         except BudgetExceeded as e:
             print(f"[{ex['id'][:8]}] stopped: budget reached ({e})", flush=True)
             return {"id": ex["id"], "stopped": str(e)}
