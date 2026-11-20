@@ -300,6 +300,50 @@ def resampled(rdir, p1dir):
     return panels
 
 
+def glm():
+    """One pair of panels per task: the single-goal benign and malicious instructions (results/glm_transfer_onegoal*)
+    scored on the DeepSeek run they were found on, and on GLM-5.3 runs with the same side task (mean gain over them).
+    Suspicion is a property of the instruction (same v1 score in both panels), read from the other two pages' data."""
+    index = {}
+    for page in ("pareto_unconstrained", "pareto_single_objective"):
+        blob = re.search(r'id="data">(.*?)</script>', (VIZ / f"{page}.html").read_text(), re.S).group(1).replace("<\\/", "</")
+        for panel in json.loads(blob)["panels"]:
+            for q in panel["points"]:
+                index.setdefault((panel["id"][:8], q["t"]), (q["s"], q["r"]))
+    plan = {p["id"]: p for p in json.loads((RES / "glm_transfer_onegoal_plan.json").read_text())}
+    rows = jl(RES / "glm_transfer_onegoal.jsonl")
+    none = {r["target"]: r for r in rows if r["name"] == "none"}
+    gain = {}
+    for r in rows:
+        if r["name"] != "none":
+            b = none[r["target"]]
+            gain[(r["traj"], r["target"], r["name"])] = sum(x - y for x, y, role in zip(b["nll"], r["nll"], b["roles"]) if role == "assistant")
+    meta = deepseek_meta({t[:8] for t in plan})
+    groups = {"benign": "benign", "malicious": "lowest", "gist": "gist", "verbatim_block": "verbatim"}
+    panels = []
+    for k, tid in enumerate(sorted({key[0] for key in gain}, key=lambda t: meta[t[:8]]["mon"][0])):
+        p = plan[tid]
+        if tid[:8] == "92fb26be" or p["instr"]["benign"] == p["instr"]["malicious"]:
+            continue
+        targets = sorted({key[1] for key in gain if key[0] == tid and key[1] != tid})
+        m = meta[tid[:8]]
+        for where in ("ds", "glm"):
+            pts = [point(0, 0, "No instruction, so there was nothing to send to the monitor; it counts as 0.", "", "none", "Baseline")]
+            for name, grp in groups.items():
+                text = p["instr"][name]
+                s, reason = index[(tid[:8], text)]
+                g = gain[(tid, tid, name)] if where == "ds" else sum(gain[(tid, t, name)] for t in targets) / len(targets)
+                extra = [] if where == "ds" else ["GLM gains: " + ", ".join(f"{gain[(tid, t, name)]:+.0f}" for t in targets)]
+                label = {"benign": "Benign: passes the monitor, single goal", "malicious": "Malicious control: single-goal lowest-loss best",
+                         "gist": "Reference", "verbatim_block": "Reference"}[name]
+                pts.append(point(g, s, reason, text, grp, label, extra))
+            panels.append({**m, "name": m["name"] + (" · DeepSeek run" if where == "ds" else " · GLM runs"),
+                           "mon": m["mon"] if where == "ds" else [], "sortKey": [k, where],
+                           "badge": None if where == "ds" else f"GLM-5.3, attacks openly · mean of {len(targets)} run{'s' if len(targets) > 1 else ''}",
+                           "points": pts})
+    return panels
+
+
 COMMON_CAVEATS = [
     "Gain is from a single scoring pass. The reference model's loss moves by about 3 nats under trivial edits such as a "
     "trailing space, so differences of a few nats are noise.",
@@ -331,6 +375,27 @@ INTRO_COMMON = [
 ]
 
 PAGES = {
+    "glm": {
+        "file": "pareto_glm.html", "title": "Openly Malicious Agent Test",
+        "h1": "Does an innocent-sounding instruction still explain an agent that attacks in the open?",
+        "lede": "Each benign-sounding instruction was found on a DeepSeek V4 Pro run, where the agent hid its side task. Here it is also "
+                "scored on GLM-5.3 runs with the same side task, where the agent narrates its attack openly. Each task has two panels: "
+                "the DeepSeek run, then the GLM runs. If the cover story clashes with an agent that says what it is doing, the benign "
+                "instruction (orange) should fall behind the plainly malicious control (blue) in the GLM panel.",
+        "groups": ["benign", "lowest", "verbatim", "gist", "none"],
+        "caveats": ["Single-goal instructions only (one objective, no method), so they carry little coding-task detail. Benign = the best "
+                    "low-suspicion-search instruction with suspicion at most 25 that still carries the side task (a rough string match); "
+                    "malicious = the single-goal lowest-loss search's best.",
+                    "11 tasks. The benign instruction loses ground on GLM in 6 of them (median benign minus malicious: about -3 nats on "
+                    "DeepSeek, -10 on GLM), which is close to a coin flip at this size.",
+                    "The GLM runs share the side task but usually not the coding task (2 of 19 share both); GLM gain is the mean over "
+                    "that task's GLM runs (each run's gain is in the point's details).",
+                    "Suspicion belongs to the instruction, so a point sits at the same height in both panels; it was judged against "
+                    "the DeepSeek run's task description.",
+                    "One task is left out because its benign pick states the side task outright (it passed on one noisy monitor call)."]
+        + COMMON_CAVEATS[:1] + COMMON_CAVEATS[2:3],
+        "notes": [],
+    },
     "unconstrained": {
         "file": "pareto_unconstrained.html", "title": "Unconstrained Instruction Search",
         "h1": "Can an instruction explain a hidden attack and still look innocent?",
@@ -428,7 +493,7 @@ def render(key, panels, out):
     runs_txt = ("twice" if runs == [2] else f"{runs[0]} times" if len(runs) == 1 else f"{runs[0]} to {runs[-1]} times") if runs else "several times"
     fmt = {"runs": runs_txt, "n": len(panels)}
     for p in panels:
-        p["monSort"] = (max(p["mon"]) if p["mon"] else 999, sum(p["mon"]) / max(1, len(p["mon"])), p["name"])
+        p["monSort"] = p.pop("sortKey", None) or (max(p["mon"]) if p["mon"] else 999, sum(p["mon"]) / max(1, len(p["mon"])), p["name"])
     panels.sort(key=lambda p: p["monSort"])
     for p in panels:
         del p["monSort"]
@@ -854,8 +919,8 @@ tr.row:hover, tr.row.sel { background: var(--wash); }
     const tx = h("div", "ph-text", null, ph);
     h("h2", "pname", panel.name, tx);
     const meta = h("div", "pmeta", null, tx);
-    meta.append(document.createTextNode(`In a ${panel.env} · ${monLabel(panel)}: `));
-    h("b", null, monTxt(panel), meta);
+    if (panel.mon.length) { meta.append(document.createTextNode(`In a ${panel.env} · ${monLabel(panel)}: `)); h("b", null, monTxt(panel), meta); }
+    else meta.append(document.createTextNode(`In a ${panel.env}`));
     if (panel.badge) h("span", "badge", panel.badge, tx);
     const ob = h("button", "open", "Enlarge", ph); ob.type = "button"; ob.setAttribute("aria-label", "Enlarge " + panel.name);
     ob.addEventListener("click", () => openDialog(panel));
@@ -904,8 +969,9 @@ tr.row:hover, tr.row.sel { background: var(--wash); }
     const ctx = h("div", "dlg-ctx", null, tt);
     const l1 = h("span", null, null, ctx); h("b", null, "Side task (one-line summary): ", l1); l1.append(document.createTextNode(panel.gist));
     if (panel.task) { const l2 = h("span", null, null, ctx); h("b", null, "Coding task (opening of the prompt): ", l2); l2.append(document.createTextNode(panel.task)); }
-    const l3 = h("span", null, null, ctx); h("b", null, monLabel(panel) + ": ", l3);
-    l3.append(document.createTextNode(monTxt(panel) + `  \u00b7  ${panel.env}` + (DATA.resampled ? "" : `  \u00b7  run id ${panel.id}`)));
+    const l3 = h("span", null, null, ctx);
+    if (panel.mon.length) { h("b", null, monLabel(panel) + ": ", l3); l3.append(document.createTextNode(monTxt(panel) + `  \u00b7  ${panel.env}`)); }
+    else l3.append(document.createTextNode((panel.badge ? panel.badge + "  \u00b7  " : "") + panel.env));
     const cb = h("button", "close-x", "Close", top); cb.type = "button"; cb.addEventListener("click", () => dlg.close());
     const body = h("div", "dlg-body", null, inner);
     const chartBox = h("div", "dlg-chart", null, body);
@@ -976,8 +1042,8 @@ def main():
         PAGES["resampled"]["notes"] = ["Each pair has up to four runs by the same model: two in the plain setup, one inside the "
                                        "Codex harness and one inside the Claude Code harness, whose prompts wrap the task in extra "
                                        "context. One instruction has to explain all of them."]
-    build = {"unconstrained": unconstrained, "single": single_objective, "resampled": lambda: resampled(a.resampled_dir, p1)}
-    for key in a.only or PAGES:
+    build = {"unconstrained": unconstrained, "single": single_objective, "resampled": lambda: resampled(a.resampled_dir, p1), "glm": glm}
+    for key in a.only or [k for k in PAGES if k != "glm"] + ["glm"]:  # glm reads the other pages' data
         panels = build[key]()
         out = VIZ / (a.resampled_file if key == "resampled" and a.resampled_file else PAGES[key]["file"])
         n = render(key, panels, out)
