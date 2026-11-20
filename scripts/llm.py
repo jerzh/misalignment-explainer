@@ -23,12 +23,14 @@ OPUS = "anthropic/claude-opus-5.5"
 OPUS48 = "anthropic/claude-opus-4.8"
 DIRECT_ID = {OPUS: "claude-opus-5-5", OPUS48: "claude-opus-4-8"}  # Anthropic API model ids
 QWEN = "qwen/qwen3-32b"
+GEMMA = "google/gemma-4-31b-it"  # monitor_xf (cross-family instruction monitor, 2026-11-19)
 PRICES = {  # $ per million tokens (OpenRouter, 2026-11-18): input, output, cache read, cache write
     OPUS: (4.0, 20.0, 0.20, 5.0),
     OPUS48: (5.0, 25.0, 0.50, 6.25),
     QWEN: (0.08, 0.28, 0.08, 0.08),
+    GEMMA: (0.20, 0.40, 0.20, 0.20),  # OpenRouter list price 2026-11-19
 }
-MARGIN = {OPUS: 0.20, OPUS48: 0.25, QWEN: 0.01}  # $ reserved per call when checking the budget
+MARGIN = {OPUS: 0.20, OPUS48: 0.25, QWEN: 0.01, GEMMA: 0.01}  # $ reserved per call when checking the budget
 
 
 class BudgetExceeded(Exception):

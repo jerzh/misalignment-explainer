@@ -19,7 +19,7 @@ spec:
       - type: DisruptionTarget
   template:
     spec:
-      priorityClassName: normal-batch  # normal priority only (resampled session)
+      priorityClassName: interactive  # interactive (user approved 2026-11-19; the main session has no interactive job meanwhile)
       restartPolicy: Never
       imagePullSecrets:
       - name: docker
